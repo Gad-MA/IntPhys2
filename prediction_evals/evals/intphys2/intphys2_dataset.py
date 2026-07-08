@@ -83,7 +83,7 @@ class IntPhys2Dataset(torch.utils.data.Dataset):
     
         self.data_path = data_path
         labels = pd.read_csv(self.data_path + "/metadata.csv")
-        videos = sorted(list(labels['filename'].unique()))
+        videos = sorted(list(labels['file_name'].unique()))
         if use_image_dir:
             self.videopaths =  sorted([self.data_path +'/Images/'+ vid for vid  in videos if os.path.exists(self.data_path +'/Images/'+ vid )])
         else:
