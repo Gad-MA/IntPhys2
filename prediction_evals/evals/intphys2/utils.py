@@ -27,15 +27,6 @@ SUPPORTED_CLUSTERS = {
 
 @lru_cache()
 def get_cluster() -> str:
-    # If the node is assigned by slurm, this is easy
-    where = os.environ.get("SLURM_CLUSTER_NAME")
-    if where is not None:
-        if where in SUPPORTED_CLUSTERS:
-            return SUPPORTED_CLUSTERS[where]
-        else:
-            #return where we are to add support
-            return where
-    # default: return the default name
     return CLUSTER
 
 # Gets slurm job vars, to launch another job with the same vars
@@ -52,9 +43,9 @@ def slurm_account_partition_and_qos(low_pri: bool) -> str:
 # TODO: UPDATE PATHS BEFORE RELEASE
 DATASET_PATHS_BY_CLUSTER = {
     CLUSTER: {
-        'IntPhys2-debug': 'PATH_TO_DEBUG',
-        'IntPhys2-main': 'PATH_TO_MAIN',
-        'IntPhys2-heldout': 'PATH_TO_HELDOUT',
+        'IntPhys2-debug': '/content/IntPhys2_Data/Debug/',
+        'IntPhys2-main': '/content/IntPhys2_Data/Main/',
+        'IntPhys2-heldout': '/content/IntPhys2_Data/HeldOut/',
     },
 }
 
