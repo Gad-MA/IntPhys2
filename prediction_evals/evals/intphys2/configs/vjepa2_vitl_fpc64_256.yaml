@@ -42,6 +42,7 @@ model_kwargs:
       patch_size: 16
       tubelet_size: 2
       predictor_embed_dim: 384
+      num_heads: 12
       depth: 12
       uniform_power: true
       num_mask_tokens: 10
