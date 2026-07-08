@@ -116,11 +116,12 @@ def init_module(
 
     use_rope = 'rope' in enc_model_name
     rope_is_1D = 'rope1D' in enc_model_name
+    pred_num_heads = pred_kwargs.pop("num_heads", encoder.backbone.num_heads)
     predictor = vit_pred.__dict__[pred_model_name](
         img_size=resolution,
         num_frames=frames_per_clip,
         embed_dim=encoder.backbone.embed_dim,
-        num_heads=encoder.backbone.num_heads,
+        num_heads=pred_num_heads,
         use_rope=use_rope,
         rope_is_1D=rope_is_1D,
         **pred_kwargs
