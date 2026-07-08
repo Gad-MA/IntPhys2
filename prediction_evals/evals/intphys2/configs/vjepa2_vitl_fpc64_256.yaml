@@ -1,0 +1,57 @@
+# Configuration for vjepa2-vitl-fpc64-256
+# HuggingFace: https://huggingface.co/facebook/vjepa2-vitl-fpc64-256
+# Environment: T4 Google Colab (single GPU, 16GB VRAM)
+#
+# NOTE: Download the original checkpoint before running:
+#   pip install huggingface_hub
+#   python -c "from huggingface_hub import hf_hub_download; hf_hub_download('facebook/vjepa2-vitl-fpc64-256', 'original/model.pth', local_dir='./checkpoints/vjepa2-vitl-fpc64-256')"
+#
+# Run with:
+#   python -m evals.main --devices cuda:0 --fname evals/intphys2/configs/vjepa2_vitl_fpc64_256.yaml
+
+nodes: 1
+tasks_per_node: 1
+tag: default
+eval_name: intphys2
+folder: ./logs/vjepa2-vitl-fpc64-256/
+resume_checkpoint: false
+experiment:
+  data:
+    batch_size: 1
+    resolution: 256
+    stride_sliding_window: 2
+    use_bfloat16: false
+    frames_per_clip: 64
+    context_lengths: [16,24,32,40,48,56]
+    frame_steps: 10
+    num_frames_to_pred: -1
+    dataset: intphys2-debug
+  max_context_mode: true
+model_kwargs:
+  checkpoint: ./checkpoints/vjepa2-vitl-fpc64-256/original/model.pth
+  module_name: app.vjepa.modelcustom.default_wrapper
+  wrapper_kwargs:
+    no_predictor: false
+  pretrain_kwargs:
+    resolution: 256
+    predictor:
+      model_name: vit_predictor
+      checkpoint_key: predictor
+      use_mask_tokens: true
+      is_causal: false
+      patch_size: 16
+      tubelet_size: 2
+      predictor_embed_dim: 384
+      depth: 12
+      uniform_power: true
+      num_mask_tokens: 10
+      zero_init_mask_tokens: true
+    encoder:
+      model_name: vit_large_rope
+      checkpoint_key: encoder
+      patch_size: 16
+      tubelet_size: 2
+      uniform_power: true
+      is_causal: false
+    target_encoder:
+      checkpoint_key: target_encoder
