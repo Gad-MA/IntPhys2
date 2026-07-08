@@ -13,7 +13,7 @@ nodes: 1
 tasks_per_node: 1
 tag: default
 eval_name: intphys2
-folder: ./logs/vjepa2-vitl-fpc64-256/
+folder: /content/logs/vjepa2-vitl-fpc64-256/
 resume_checkpoint: false
 experiment:
   data:
@@ -22,13 +22,14 @@ experiment:
     stride_sliding_window: 2
     use_bfloat16: false
     frames_per_clip: 64
-    context_lengths: [16,24,32,40,48,56]
+    # context_lengths: [16,24,32,40,48,56]
+    context_lengths: [16,32,48,56]
     frame_steps: 10
     num_frames_to_pred: -1
     dataset: intphys2-debug
   max_context_mode: true
 model_kwargs:
-  checkpoint: ./checkpoints/vjepa2-vitl-fpc64-256/original/model.pth
+  checkpoint: /content/checkpoints/vjepa2-vitl-fpc64-256/original/model.pth
   module_name: app.vjepa.modelcustom.default_wrapper
   wrapper_kwargs:
     no_predictor: false
