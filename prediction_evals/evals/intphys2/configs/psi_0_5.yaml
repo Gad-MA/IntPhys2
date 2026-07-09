@@ -1,8 +1,8 @@
 eval_name: intphys2
-folder: ./logs/psi0_5/
+folder: /content/logs/psi0_5/
 
 model_kwargs:
-  module_name: prediction_evals.app.psi.wrapper
+  module_name: app.psi.wrapper
   checkpoint: null
   pretrain_kwargs:
     repo_id: "StanfordNeuroAILab/psi0_5"
