@@ -1,0 +1,22 @@
+eval_name: intphys2
+folder: ./logs/psi0_5/
+
+model_kwargs:
+  module_name: prediction_evals.app.psi.wrapper
+  checkpoint: null
+  pretrain_kwargs:
+    repo_id: "StanfordNeuroAILab/psi0_5"
+  device: "cuda:0"
+
+experiment:
+  max_context_mode: true
+  data:
+    dataset: intphys2-debug
+    batch_size: 1
+    frames_per_clip: 64
+    frame_steps: 10
+    num_frames_to_pred: -1
+    context_lengths: [16, 24, 32, 40, 48, 56]
+    resolution: 256
+    stride_sliding_window: 2
+    use_bfloat16: true
