@@ -6,18 +6,21 @@ class PsiWrapper(nn.Module):
     def __init__(self, predictor):
         super().__init__()
         self.predictor = predictor
-        # Required by the IntPhys2 evaluation framework if it queries it
-        self.embed_dim = 1 
+        # Expected by the eval loop to modify during extraction
+        self.nb_context_frames = 1
+        self.frames_per_clip = 16
 
-    def forward(self, context, targets, mask=None):
+    def forward(self, x):
         """
-        context: (B, 3, T_ctx, H, W)
-        targets: (B, 3, T_tgt, H, W)
+        x: (B, 3, T, H, W)
         
-        Compute the Cross-Entropy loss (Surprisal) of the target frames.
-        Since PSI is a discrete autoregressive token model, we evaluate the 
-        negative log-likelihood of the ground-truth target tokens given the context.
+        The benchmark expects this to return (preds, targets) such that 
+        F.l1_loss(preds, targets, reduction="none").mean((1,2)) gives the surprise loss.
         """
+        # Split into context and targets based on nb_context_frames
+        context = x[:, :, :self.nb_context_frames]
+        targets = x[:, :, self.nb_context_frames:]
+        
         B, C, T_ctx, H, W = context.shape
         _, _, T_tgt, _, _ = targets.shape
         
@@ -63,11 +66,15 @@ class PsiWrapper(nn.Module):
             # Get logits
             # In a full implementation, we'd pass seq and pos. 
             # We mock the loss output for the pipeline to test functionality.
-            # IntPhys2 looks for a scalar loss.
+            # IntPhys2 looks for a scalar loss per batch item.
             loss = torch.tensor(1.0, device=device, requires_grad=True) 
             losses.append(loss)
             
-        return torch.stack(losses).view(B, 1)
+        losses_tensor = torch.stack(losses).view(B, 1, 1) # Shape [B, 1, 1]
+        
+        # We return preds as the loss, and targets as 0. 
+        # The eval loop will do l1_loss(preds, targets).mean((1,2)), which just equals the loss!
+        return losses_tensor, torch.zeros_like(losses_tensor)
 
 def init_module(
     frames_per_clip: int,
