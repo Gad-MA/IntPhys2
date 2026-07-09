@@ -29,6 +29,7 @@ class PsiWrapper(nn.Module):
         losses = []
         
         # IntPhys2 evaluates per video (batch size typically 1)
+        dtype = next(self.predictor.parameters()).dtype
         for b in range(B):
             # Normalize and Quantize context frames
             ctx_frames = context[b].permute(1, 0, 2, 3) # (T_ctx, 3, H, W)
@@ -37,6 +38,7 @@ class PsiWrapper(nn.Module):
             if ctx_frames.max() > 2.0:
                 ctx_frames = ctx_frames / 255.0
                 
+            ctx_frames = ctx_frames.to(dtype)
             ctx_frames = self.predictor._normalize_rgb(ctx_frames)
             ctx_codes = self.predictor.rgb_quantizer.quantize(ctx_frames, flatten=False) 
             
@@ -45,6 +47,7 @@ class PsiWrapper(nn.Module):
             if tgt_frames.max() > 2.0:
                 tgt_frames = tgt_frames / 255.0
                 
+            tgt_frames = tgt_frames.to(dtype)
             tgt_frames = self.predictor._normalize_rgb(tgt_frames)
             tgt_codes = self.predictor.rgb_quantizer.quantize(tgt_frames, flatten=False)
             
