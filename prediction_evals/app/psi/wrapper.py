@@ -29,7 +29,11 @@ class PsiWrapper(nn.Module):
         losses = []
         
         # IntPhys2 evaluates per video (batch size typically 1)
-        dtype = next(self.predictor.parameters()).dtype
+        try:
+            dtype = next(self.predictor.parameters()).dtype
+        except AttributeError:
+            dtype = self.predictor.rgb_quantizer.project_in.weight.dtype
+            
         for b in range(B):
             # Normalize and Quantize context frames
             ctx_frames = context[b].permute(1, 0, 2, 3) # (T_ctx, 3, H, W)
