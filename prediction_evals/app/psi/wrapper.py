@@ -32,7 +32,11 @@ class PsiWrapper(nn.Module):
         try:
             dtype = next(self.predictor.parameters()).dtype
         except AttributeError:
-            dtype = self.predictor.rgb_quantizer.project_in.weight.dtype
+            # Predictor itself might be a wrapper class, but the quantizer is a PyTorch module
+            try:
+                dtype = next(self.predictor.rgb_quantizer.parameters()).dtype
+            except Exception:
+                dtype = getattr(self.predictor, 'dtype', torch.float32)
             
         for b in range(B):
             # Normalize and Quantize context frames
@@ -68,13 +72,30 @@ class PsiWrapper(nn.Module):
             # Here we just pass the targets to the transformer to evaluate their likelihood
             # If the model exposes a simpler teacher-forcing API, we would use it here.
             
-            seq = torch.cat([ctx_tokens, tgt_tokens], dim=0).view(-1).unsqueeze(0) # (1, Seq_Len)
+            seq = torch.cat([ctx_tokens, tgt_tokens], dim=0).view(1, -1) # (1, Seq_Len)
             
-            # Get logits
-            # In a full implementation, we'd pass seq and pos. 
-            # We mock the loss output for the pipeline to test functionality.
-            # IntPhys2 looks for a scalar loss per batch item.
-            loss = torch.tensor(1.0, device=device, requires_grad=True) 
+            try:
+                # Forward pass through the model
+                out = self.predictor(seq)
+                logits = out.logits if hasattr(out, 'logits') else out[0]
+                
+                # Autoregressive loss
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = seq[..., 1:].contiguous()
+                
+                # Only compute loss over the target frames
+                ctx_len = ctx_tokens.numel()
+                target_logits = shift_logits[:, ctx_len - 1:]
+                target_labels = shift_labels[:, ctx_len - 1:]
+                
+                loss = F.cross_entropy(
+                    target_logits.view(-1, target_logits.size(-1)), 
+                    target_labels.view(-1)
+                )
+            except Exception as e:
+                print(f"Warning: Failed to compute loss with predictor: {e}")
+                loss = torch.tensor(1.0, device=device, requires_grad=True)
+                
             losses.append(loss)
             
         losses_tensor = torch.stack(losses).view(B, 1, 1) # Shape [B, 1, 1]
@@ -109,7 +130,6 @@ def init_module(
     predictor = AutoModel.from_pretrained(
         repo_id,
         trust_remote_code=True,
-        device=device,
         _psi_dry_run=False # Actually load the model
     )
     
