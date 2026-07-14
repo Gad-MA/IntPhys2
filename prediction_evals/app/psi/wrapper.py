@@ -17,6 +17,11 @@ class PsiWrapper(nn.Module):
         The benchmark expects this to return (preds, targets) such that 
         F.l1_loss(preds, targets, reduction="none").mean((1,2)) gives the surprise loss.
         """
+        # Explicitly disable autocast so intermediate operations in quantizer don't convert to bfloat16
+        with torch.cuda.amp.autocast(enabled=False):
+            return self._forward_impl(x)
+
+    def _forward_impl(self, x):
         # Split into context and targets based on nb_context_frames
         context = x[:, :, :self.nb_context_frames]
         targets = x[:, :, self.nb_context_frames:]
