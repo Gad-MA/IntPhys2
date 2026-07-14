@@ -42,12 +42,10 @@ class PsiWrapper(nn.Module):
             # Normalize and Quantize context frames
             ctx_frames = context[b].permute(1, 0, 2, 3) # (T_ctx, 3, H, W)
             # PSI expects [0, 1] range before _normalize_rgb
-            # Assuming IntPhys2 passes [0, 1] or we normalize it
             if ctx_frames.max() > 2.0:
                 ctx_frames = ctx_frames / 255.0
                 
-            ctx_frames = ctx_frames.to(dtype)
-            ctx_frames = self.predictor._normalize_rgb(ctx_frames)
+            ctx_frames = self.predictor._normalize_rgb(ctx_frames).to(dtype)
             ctx_codes = self.predictor.rgb_quantizer.quantize(ctx_frames, flatten=False) 
             
             # Normalize and Quantize target frames
@@ -55,8 +53,7 @@ class PsiWrapper(nn.Module):
             if tgt_frames.max() > 2.0:
                 tgt_frames = tgt_frames / 255.0
                 
-            tgt_frames = tgt_frames.to(dtype)
-            tgt_frames = self.predictor._normalize_rgb(tgt_frames)
+            tgt_frames = self.predictor._normalize_rgb(tgt_frames).to(dtype)
             tgt_codes = self.predictor.rgb_quantizer.quantize(tgt_frames, flatten=False)
             
             # Flatten into tokens
