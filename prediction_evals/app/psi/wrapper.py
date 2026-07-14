@@ -78,7 +78,7 @@ class PsiWrapper(nn.Module):
             
             try:
                 # Forward pass through the model
-                out = self.predictor(seq)
+                out = self.predictor.model(seq)
                 logits = out.logits if hasattr(out, 'logits') else out[0]
                 
                 # Autoregressive loss
