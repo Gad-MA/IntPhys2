@@ -1,0 +1,64 @@
+# IntPhys2 evaluation config for PSI-0.5
+# (StanfordNeuroAILab/psi0_5 — pixel-space L1 surprise, single-frame prediction)
+#
+# USAGE — local (single GPU):
+#   cd prediction_evals/
+#   python -m evals.main --devices cuda:0 --fname evals/intphys2/configs/psi.yaml
+#
+# USAGE — SLURM cluster:
+#   python -m evals.main_distributed \
+#     --fname evals/intphys2/configs/psi.yaml \
+#     --folder ./logs --partition YOUR_PARTITION
+#
+# NOTE: PSI generates frames autoregressively (one token at a time), so
+# inference is slower than V-JEPA / VideoMAEv2.  Start on intphys2-debug
+# (60 videos) to verify correctness before switching to intphys2-main.
+
+# Cluster / distributed settings
+nodes: 1
+tasks_per_node: 1   # Use 1 GPU per node; PSI is memory-intensive
+
+tag: default
+eval_name: intphys2
+
+# Output directory for .pth loss files (update to your desired path)
+folder: ./results/psi0_5/
+resume_checkpoint: false
+
+experiment:
+  data:
+    batch_size: 1          # PSI is slow; keep batch size at 1
+    resolution: 224        # IntPhys2 native resolution
+    stride_sliding_window: 2
+    # PSI handles its own dtype (bfloat16) internally.
+    # Disable autocast in the harness to avoid bfloat16 PIL conversion issues.
+    use_bfloat16: false
+    frames_per_clip: 16
+    # Sweep over these context lengths (in frames).
+    # Each sets how many frames are "given" before the surprise point.
+    context_lengths: [4, 6, 8, 10, 12, 14]
+    frame_steps: 10        # Sample every 10th frame from the raw video
+    num_frames_to_pred: -1 # Use full frames_per_clip window
+    dataset: intphys2-debug  # Start here; switch to intphys2-main when ready
+
+  # Also evaluate with shorter context lengths on the video beginning,
+  # so physics violations that occur early are not missed.
+  max_context_mode: true
+
+model_kwargs:
+  # HuggingFace repo ID (auto-downloaded on first run) or local directory.
+  checkpoint: StanfordNeuroAILab/psi0_5
+
+  # Python import path for the wrapper module (relative to prediction_evals/).
+  module_name: app.psi.modelcustom.default_wrapper
+
+  # Passed as wrapper_kwargs to init_module → AnticipativePSIWrapper.__init__
+  wrapper_kwargs:
+    gen_temp: 1.0      # Sampling temperature (1.0 = unmodified)
+    gen_top_k: 1000    # Top-K nucleus (PSI README recommendation for RGB)
+    gen_top_p: 1.0     # Top-P nucleus  (1.0 = disabled)
+    gen_seed: 42       # RNG seed for reproducible generation
+
+  # Passed as model_kwargs (pretrain_kwargs) to init_module
+  pretrain_kwargs:
+    resolution: 224    # Must match experiment.data.resolution above

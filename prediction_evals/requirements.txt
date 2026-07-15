@@ -21,3 +21,4 @@ fire
 python-box
 scikit-image
 ftfy
+tiktoken  # required by PSI-0.5 (lazy-loaded for text modality)
