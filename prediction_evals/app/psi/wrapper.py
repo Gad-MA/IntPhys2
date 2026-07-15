@@ -83,9 +83,34 @@ class PsiWrapper(nn.Module):
             pos = torch.zeros(seq.shape[0], seq.shape[1], 4, dtype=torch.long, device=device)
             
             try:
-                # Forward pass through the model
-                out = self.predictor.model(seq, pos)
-                logits = out.logits if hasattr(out, 'logits') else out[0]
+                # We chunk the forward pass to prevent OOM on the MLP layers.
+                # 64 frames all at once requires ~4.7GB peak memory. Chunking to 8 frames requires ~600MB.
+                tokens_per_frame = ctx_tokens.shape[0] // T_ctx
+                chunk_size = 8 * tokens_per_frame
+                
+                kv_cache = None
+                all_logits = []
+                
+                for i in range(0, seq.size(1), chunk_size):
+                    chunk_seq = seq[:, i:i+chunk_size]
+                    chunk_pos = pos[:, i:i+chunk_size]
+                    
+                    k = kv_cache[0] if kv_cache else None
+                    v = kv_cache[1] if kv_cache else None
+                    
+                    out, new_k, new_v = self.predictor.model(
+                        chunk_seq, 
+                        chunk_pos, 
+                        k_cache=k, 
+                        v_cache=v,
+                        return_kv=True
+                    )
+                    
+                    chunk_logits = out.logits if hasattr(out, 'logits') else out
+                    all_logits.append(chunk_logits)
+                    kv_cache = (new_k, new_v)
+                
+                logits = torch.cat(all_logits, dim=1)
                 
                 # Autoregressive loss
                 shift_logits = logits[..., :-1, :].contiguous()
