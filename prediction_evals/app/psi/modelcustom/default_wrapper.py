@@ -247,9 +247,12 @@ class AnticipativePSIWrapper(nn.Module):
             pil_context = Image.fromarray(frame_np)
 
             # Generate the next frame.
-            # PSI returns a PIL Image at the same resolution as the input.
+            # PSI.generate() always returns a tuple of outputs, one per
+            # right-hand-side element in the notation string.
+            # For "rgb0->rgb1" there is exactly one output (rgb1), so we
+            # unwrap the 1-tuple to get the PIL Image directly.
             with torch.no_grad():
-                pil_pred = self.psi_predictor.generate(
+                raw_output = self.psi_predictor.generate(
                     "rgb0->rgb1",
                     rgb0=pil_context,
                     temp=self.gen_temp,
@@ -258,12 +261,26 @@ class AnticipativePSIWrapper(nn.Module):
                     seed=self.gen_seed,
                 )
 
-            # Ensure output is the same spatial size as the input
-            if pil_pred.size != pil_context.size:
+            # Unwrap tuple / list wrappers that PSI may return
+            if isinstance(raw_output, (tuple, list)):
+                pil_pred = raw_output[0]
+            else:
+                pil_pred = raw_output
+
+            # Ensure it is a proper RGB PIL Image
+            if not isinstance(pil_pred, Image.Image):
+                raise TypeError(
+                    f"PSI generate() returned unexpected type: {type(pil_pred)}. "
+                    f"Expected PIL.Image.Image. Full output: {raw_output!r}"
+                )
+            pil_pred = pil_pred.convert("RGB")
+
+            # Ensure output matches the input spatial size (W, H) in PIL convention
+            if pil_pred.size != (W, H):
                 pil_pred = pil_pred.resize((W, H), Image.BILINEAR)
 
             # Back to float32 tensor in [0, 1]: [3, H, W]
-            pred_np = np.array(pil_pred.convert("RGB")).astype(np.float32) / 255.0
+            pred_np = np.array(pil_pred).astype(np.float32) / 255.0
             pred_tensor = torch.from_numpy(pred_np).permute(2, 0, 1)
             predicted_pixels_list.append(pred_tensor)
 
