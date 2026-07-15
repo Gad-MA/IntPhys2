@@ -21,6 +21,7 @@ class PsiWrapper(nn.Module):
         with torch.cuda.amp.autocast(enabled=False):
             return self._forward_impl(x)
 
+    @torch.no_grad()
     def _forward_impl(self, x):
         # Split into context and targets based on nb_context_frames
         context = x[:, :, :self.nb_context_frames]
