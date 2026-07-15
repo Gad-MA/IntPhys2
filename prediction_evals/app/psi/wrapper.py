@@ -76,9 +76,14 @@ class PsiWrapper(nn.Module):
             
             seq = torch.cat([ctx_tokens, tgt_tokens], dim=0).view(1, -1) # (1, Seq_Len)
             
+            # The actual PSI transformer strictly requires a 4D position tensor for each token
+            # Format: [x, y, time, channel]
+            # Since we are mocking the positions right now to test the loss pipeline, we pass zeros.
+            pos = torch.zeros(seq.shape[0], seq.shape[1], 4, dtype=torch.long, device=device)
+            
             try:
                 # Forward pass through the model
-                out = self.predictor.model(seq)
+                out = self.predictor.model(seq, pos)
                 logits = out.logits if hasattr(out, 'logits') else out[0]
                 
                 # Autoregressive loss
