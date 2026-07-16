@@ -242,18 +242,39 @@ class AnticipativePSIWrapper(nn.Module):
         # Work in float32 throughout (PIL/numpy do not support bfloat16).
         x_f32 = x.float()
 
-        # Determine which frame index is the last context frame and which is
-        # the first target frame.  Clamp so we never go out of bounds.
+        # Determine context boundary.  Clamp so we never go out of bounds.
         ctx_idx = min(self.nb_context_frames - 1, T - 2)
-        tgt_idx = ctx_idx + 1
+        tgt_idx = ctx_idx + 1          # frame to predict
+        n_context = ctx_idx + 1        # total context frames: 0 … ctx_idx
 
-        # Extract frames: [B, 3, H, W]
-        context_frame = x_f32[:, :, ctx_idx, :, :]
-        target_frame  = x_f32[:, :, tgt_idx, :, :]
+        # ------------------------------------------------------------------
+        # Denormalise all context frames and the target frame to [0, 1].
+        # ------------------------------------------------------------------
+        # context_pixels_list[i]: [B, 3, H, W] for frame i in the window
+        context_pixels_list = []
+        for i in range(n_context):
+            frame = x_f32[:, :, i, :, :]
+            pixels = (frame * self.img_std + self.img_mean).clamp(0.0, 1.0)
+            context_pixels_list.append(pixels)
 
-        # Undo ImageNet normalisation → [0, 1] pixel values
-        context_pixels = (context_frame * self.img_std + self.img_mean).clamp(0.0, 1.0)
-        target_pixels  = (target_frame  * self.img_std + self.img_mean).clamp(0.0, 1.0)
+        target_pixels = (
+            (x_f32[:, :, tgt_idx, :, :] * self.img_std + self.img_mean)
+            .clamp(0.0, 1.0)
+        )
+
+        # ------------------------------------------------------------------
+        # Build PSI notation dynamically from the context length.
+        #
+        # Example — ctx_idx=3 (4 context frames):
+        #   notation  = "rgb0,rgb1,rgb2,rgb3->rgb4"
+        #   kwargs    = {rgb0: PIL0, rgb1: PIL1, rgb2: PIL2, rgb3: PIL3}
+        #   output    = (PIL4,)   → unwrap → PIL4
+        #
+        # This uses PSI's native multi-RGB conditioning, giving the model full
+        # temporal context rather than just the last frame.
+        # ------------------------------------------------------------------
+        input_side  = ",".join(f"rgb{i}" for i in range(n_context))
+        notation    = f"{input_side}->rgb{tgt_idx}"
 
         # ------------------------------------------------------------------
         # Run PSI on each sample in the batch sequentially.
@@ -262,59 +283,56 @@ class AnticipativePSIWrapper(nn.Module):
         predicted_pixels_list: list[torch.Tensor] = []
 
         for b in range(B):
-            # Convert context frame to uint8 PIL Image on CPU
-            frame_np = (
-                context_pixels[b]           # [3, H, W]
-                .permute(1, 2, 0)           # [H, W, 3]
-                .cpu()
-                .numpy()
-            )
-            frame_np = (frame_np * 255.0).clip(0, 255).astype(np.uint8)
-            pil_context = Image.fromarray(frame_np)
+            # Convert every context frame to a uint8 PIL Image.
+            rgb_kwargs: dict[str, Image.Image] = {}
+            for i in range(n_context):
+                frame_np = (
+                    context_pixels_list[i][b]   # [3, H, W]
+                    .permute(1, 2, 0)           # [H, W, 3]
+                    .cpu()
+                    .numpy()
+                )
+                frame_np = (frame_np * 255.0).clip(0, 255).astype(np.uint8)
+                rgb_kwargs[f"rgb{i}"] = Image.fromarray(frame_np)
+
+            # The last context frame is used as the reference in the viz panel.
+            pil_context = rgb_kwargs[f"rgb{ctx_idx}"]
 
             # Generate the next frame.
-            # PSI.generate() always returns a tuple of outputs, one per
-            # right-hand-side element in the notation string.
-            # For "rgb0->rgb1" there is exactly one output (rgb1), so we
-            # unwrap the 1-tuple to get the PIL Image directly.
+            # PSI.generate() returns a tuple — one element per output variable
+            # in the notation.  We request exactly one output (rgb{tgt_idx}).
             with torch.no_grad():
                 raw_output = self.psi_predictor.generate(
-                    "rgb0->rgb1",
-                    rgb0=pil_context,
+                    notation,
+                    **rgb_kwargs,
                     temp=self.gen_temp,
                     top_k=self.gen_top_k,
                     top_p=self.gen_top_p,
                     seed=self.gen_seed,
                 )
 
-            # Unwrap tuple / list wrappers that PSI may return
+            # Unwrap the 1-tuple PSI always returns
             if isinstance(raw_output, (tuple, list)):
                 pil_pred = raw_output[0]
             else:
                 pil_pred = raw_output
 
-            # Ensure it is a proper RGB PIL Image
+            # Guard against unexpected return types
             if not isinstance(pil_pred, Image.Image):
                 raise TypeError(
                     f"PSI generate() returned unexpected type: {type(pil_pred)}. "
-                    f"Expected PIL.Image.Image. Full output: {raw_output!r}"
+                    f"Expected PIL.Image.Image. notation='{notation}', "
+                    f"full output: {raw_output!r}"
                 )
             pil_pred = pil_pred.convert("RGB")
 
-            # Ensure output matches the input spatial size (W, H) in PIL convention
+            # Ensure output matches the input spatial size
             if pil_pred.size != (W, H):
                 pil_pred = pil_pred.resize((W, H), Image.BILINEAR)
 
             # ── real-time visualization ────────────────────────────────────
             if self.viz_dir is not None:
                 # Compute the absolute sampled-frame index that was predicted.
-                #
-                # max_context_mode: the clip always starts at sampled frame 0,
-                #   so the predicted frame is simply tgt_idx.
-                #
-                # main sliding-window loop: window (chunk_offset + b) starts at
-                #   sampled frame (chunk_offset + b) * stride, so the predicted
-                #   frame is that base plus tgt_idx.
                 if self._viz_is_max_context:
                     predicted_frame_idx = tgt_idx
                 else:
@@ -325,7 +343,7 @@ class AnticipativePSIWrapper(nn.Module):
                     predicted_frame_idx=predicted_frame_idx,
                     pil_context=pil_context,
                     pil_pred=pil_pred,
-                    target_pixels_b=target_pixels[b],  # [3, H, W] in [0, 1]
+                    target_pixels_b=target_pixels[b],
                 )
             self._sample_count += 1
             # ──────────────────────────────────────────────────────────────
@@ -334,6 +352,7 @@ class AnticipativePSIWrapper(nn.Module):
             pred_np = np.array(pil_pred).astype(np.float32) / 255.0
             pred_tensor = torch.from_numpy(pred_np).permute(2, 0, 1)
             predicted_pixels_list.append(pred_tensor)
+
 
         # Stack into [B, 3, H, W] and move to the same device as x
         predicted_pixels = torch.stack(predicted_pixels_list).to(x.device)
