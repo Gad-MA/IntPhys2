@@ -167,6 +167,8 @@ class AnticipativePSIWrapper(nn.Module):
         gen_top_p: float = 1.0,
         gen_seed: int = 42,
         viz_dir: str | None = None,
+        viz_stride: int = 2,
+        viz_frame_step: int = 10,
     ):
         super().__init__()
 
@@ -197,6 +199,18 @@ class AnticipativePSIWrapper(nn.Module):
         self.current_video_name: str = "unknown"
         self._current_video_frame_count = 0   # resets when current_video_name changes
         self._prev_video_name: str = ""
+        # ---- Attributes written by eval.py to enable absolute frame indexing ----
+        # stride between windows (matches stride_sliding_window in config)
+        self._viz_stride: int = viz_stride
+        # frame_step used when subsampling the video (matches frame_steps in config).
+        # raw_frame = sampled_frame × viz_frame_step
+        self._viz_frame_step: int = viz_frame_step
+        # True while eval.py is in the max_context_mode inner loop;
+        # False during the main sliding-window loop.
+        self._viz_is_max_context: bool = True
+        # Global window index of the first item in the current chunk.
+        # eval.py sets this to chunk_id * CHUNK_SIZE before each chunk call.
+        self._viz_chunk_offset: int = 0
 
         # ImageNet normalisation constants applied by the IntPhys2 transform.
         # Registered as buffers so they follow .to(device) automatically.
@@ -293,8 +307,22 @@ class AnticipativePSIWrapper(nn.Module):
 
             # ── real-time visualization ────────────────────────────────────
             if self.viz_dir is not None:
+                # Compute the absolute sampled-frame index that was predicted.
+                #
+                # max_context_mode: the clip always starts at sampled frame 0,
+                #   so the predicted frame is simply tgt_idx.
+                #
+                # main sliding-window loop: window (chunk_offset + b) starts at
+                #   sampled frame (chunk_offset + b) * stride, so the predicted
+                #   frame is that base plus tgt_idx.
+                if self._viz_is_max_context:
+                    predicted_frame_idx = tgt_idx
+                else:
+                    window_idx = self._viz_chunk_offset + b
+                    predicted_frame_idx = window_idx * self._viz_stride + tgt_idx
+
                 self._save_visualization(
-                    sample_idx=self._sample_count,
+                    predicted_frame_idx=predicted_frame_idx,
                     pil_context=pil_context,
                     pil_pred=pil_pred,
                     target_pixels_b=target_pixels[b],  # [3, H, W] in [0, 1]
@@ -357,28 +385,32 @@ class AnticipativePSIWrapper(nn.Module):
 
     def _save_visualization(
         self,
-        sample_idx: int,
+        predicted_frame_idx: int,
         pil_context: "Image.Image",
         pil_pred: "Image.Image",
         target_pixels_b: torch.Tensor,
     ) -> None:
         """
-        Save a 4-panel side-by-side image to viz_dir immediately after generation.
+        Save a 4-panel side-by-side image to viz_dir/<video_name>/ immediately
+        after each PSI generation.
 
         Layout:
             [ Context (rgb0) | PSI Prediction | Ground Truth | Diff ×5 ]
 
-        The filename encodes:
-            s{sample_idx:05d}_ctx{nb_context_frames:02d}_L1_{score:.4f}.png
+        Filename:
+            frame{predicted_frame_idx:04d}_ctx{nb_context_frames:02d}_L1_{score:.4f}.png
 
-        so images can be sorted by sample order or surprise score in any
-        file browser while the eval is still running.
+        ``predicted_frame_idx`` is the index of the predicted frame in the
+        subsampled video sequence (i.e. after applying frame_step).  For the
+        max_context_mode phase this equals tgt_idx (clip starts at frame 0);
+        for the main sliding-window loop it equals
+        (window_idx × stride) + tgt_idx.
 
         Args:
-            sample_idx:      Global counter across all forward() calls.
-            pil_context:     The frame fed to PSI as rgb0 (PIL Image, RGB).
-            pil_pred:        PSI-generated next frame  (PIL Image, RGB).
-            target_pixels_b: Actual next frame tensor  [3, H, W] float32 [0,1].
+            predicted_frame_idx: Absolute sampled-frame index being predicted.
+            pil_context:         Frame fed to PSI as rgb0 (PIL Image, RGB).
+            pil_pred:            PSI-generated next frame (PIL Image, RGB).
+            target_pixels_b:     Actual next frame tensor [3, H, W] float32 [0,1].
         """
         import os
         from PIL import ImageDraw
@@ -438,8 +470,14 @@ class AnticipativePSIWrapper(nn.Module):
         video_folder = os.path.join(self.viz_dir, self.current_video_name)
         os.makedirs(video_folder, exist_ok=True)
 
+        # frame{N}: N is the raw video frame index (0-based in the original
+        #   video file) that PSI was asked to predict.
+        #   raw_frame = predicted_sampled_frame × frame_step
+        # ctx{K}: the context length used.
+        # L1: the pixel-space surprise score for this prediction.
+        raw_frame_idx = predicted_frame_idx * self._viz_frame_step
         filename = (
-            f"f{self._current_video_frame_count:04d}"
+            f"frame{raw_frame_idx:05d}"
             f"_ctx{self.nb_context_frames:02d}"
             f"_L1_{l1_score:.4f}"
             f".png"

@@ -70,6 +70,12 @@ model_kwargs:
     gen_top_k: 1000    # Top-K nucleus (PSI README recommendation for RGB)
     gen_top_p: 1.0     # Top-P nucleus  (1.0 = disabled)
     gen_seed: 42       # RNG seed for reproducible generation
+    # Must match stride_sliding_window above so frame indices in filenames
+    # correctly reflect the absolute sampled-frame position in the video.
+    viz_stride: 2
+    # Must match frame_steps above. Converts sampled-frame index → raw video
+    # frame index in the output filename: raw_frame = sampled_frame × viz_frame_step
+    viz_frame_step: 10
     # Directory to save real-time visualizations.
     # Each PSI generation writes one 4-panel PNG immediately:
     #   [ Context frame | PSI prediction | Ground truth | Diff ×5 ]

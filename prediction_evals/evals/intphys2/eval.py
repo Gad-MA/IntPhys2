@@ -279,6 +279,8 @@ def extract_losses(
                 logger.info("Doing smalle2 contexts")
                 #Predict for all context smaller than CONTEXT, in case the physics breaking event happens before CONTEXT +1
                 #Harcoded tubelet size of 2
+                if hasattr(model, '_viz_is_max_context'):
+                    model._viz_is_max_context = True
                 for ctxt in [2*i for i in range(1,CTXT_LEN//2)]:
                     #Update wrapper
                     model.nb_context_frames=ctxt
@@ -318,10 +320,21 @@ def extract_losses(
                     model.grid_depth = model.frames_per_clip // 2
 
             # First prediction here is at CONTEXT +1
+            # Signal the wrapper: we're now in the main sliding-window loop.
+            # Reset the per-CTXT_LEN window counter so window 0 maps to the
+            # correct absolute sampled-frame index.
+            if hasattr(model, '_viz_is_max_context'):
+                model._viz_is_max_context = False
+                model._viz_main_window_count = 0
+                model._viz_stride = stride
             with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
                 logger.info(f"Number of chunks {int(np.ceil(pieces.shape[0]/CHUNK_SIZE))}")
                 for chunk_id in range(int(np.ceil(pieces.shape[0]/CHUNK_SIZE))):
                     chunk = pieces[CHUNK_SIZE*chunk_id:CHUNK_SIZE*(chunk_id+1)]
+                    # Tell the wrapper which global window index this chunk starts at,
+                    # so it can compute the absolute predicted frame index per batch item.
+                    if hasattr(model, '_viz_chunk_offset'):
+                        model._viz_chunk_offset = chunk_id * CHUNK_SIZE
 
                     preds, targets = model(chunk)
                     chunked_preds.append(preds.cpu())
