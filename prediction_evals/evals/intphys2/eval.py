@@ -236,7 +236,16 @@ def extract_losses(
 
         clip = udata_labels[0]
         clip = clip.to(device)
-        
+
+        # Inform the model which video is being processed so that real-time
+        # visualizations (if enabled) are grouped into per-video subfolders.
+        if hasattr(model, "current_video_name"):
+            try:
+                video_path = data.dataset.videopaths[int(id.item())]
+                model.current_video_name = os.path.splitext(os.path.basename(video_path))[0]
+            except Exception:
+                model.current_video_name = f"video_{int(id.item()):05d}"
+
         all_losses_ctxt = []
         for CTXT_LEN in context_lengths:
             logger.info("="*40)

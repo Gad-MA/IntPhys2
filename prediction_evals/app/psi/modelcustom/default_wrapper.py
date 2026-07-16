@@ -166,6 +166,7 @@ class AnticipativePSIWrapper(nn.Module):
         gen_top_k: int = 1000,
         gen_top_p: float = 1.0,
         gen_seed: int = 42,
+        viz_dir: str | None = None,
     ):
         super().__init__()
 
@@ -185,6 +186,17 @@ class AnticipativePSIWrapper(nn.Module):
         self.gen_top_k = gen_top_k
         self.gen_top_p = gen_top_p
         self.gen_seed = gen_seed
+
+        # Visualization: if viz_dir is set, a 4-panel comparison image
+        # (context | PSI prediction | ground truth | diff) is written to
+        # disk immediately after each PSI generation call.
+        self.viz_dir = viz_dir
+        self._sample_count = 0      # monotonically increasing across all forward() calls
+        # Set this attribute before each video to group frames into named subfolders.
+        # eval.py sets it via:  model.current_video_name = video_stem
+        self.current_video_name: str = "unknown"
+        self._current_video_frame_count = 0   # resets when current_video_name changes
+        self._prev_video_name: str = ""
 
         # ImageNet normalisation constants applied by the IntPhys2 transform.
         # Registered as buffers so they follow .to(device) automatically.
@@ -279,6 +291,17 @@ class AnticipativePSIWrapper(nn.Module):
             if pil_pred.size != (W, H):
                 pil_pred = pil_pred.resize((W, H), Image.BILINEAR)
 
+            # ── real-time visualization ────────────────────────────────────
+            if self.viz_dir is not None:
+                self._save_visualization(
+                    sample_idx=self._sample_count,
+                    pil_context=pil_context,
+                    pil_pred=pil_pred,
+                    target_pixels_b=target_pixels[b],  # [3, H, W] in [0, 1]
+                )
+            self._sample_count += 1
+            # ──────────────────────────────────────────────────────────────
+
             # Back to float32 tensor in [0, 1]: [3, H, W]
             pred_np = np.array(pil_pred).astype(np.float32) / 255.0
             pred_tensor = torch.from_numpy(pred_np).permute(2, 0, 1)
@@ -331,6 +354,98 @@ class AnticipativePSIWrapper(nn.Module):
         patches = (patches - patch_mean) / patch_std
 
         return patches
+
+    def _save_visualization(
+        self,
+        sample_idx: int,
+        pil_context: "Image.Image",
+        pil_pred: "Image.Image",
+        target_pixels_b: torch.Tensor,
+    ) -> None:
+        """
+        Save a 4-panel side-by-side image to viz_dir immediately after generation.
+
+        Layout:
+            [ Context (rgb0) | PSI Prediction | Ground Truth | Diff ×5 ]
+
+        The filename encodes:
+            s{sample_idx:05d}_ctx{nb_context_frames:02d}_L1_{score:.4f}.png
+
+        so images can be sorted by sample order or surprise score in any
+        file browser while the eval is still running.
+
+        Args:
+            sample_idx:      Global counter across all forward() calls.
+            pil_context:     The frame fed to PSI as rgb0 (PIL Image, RGB).
+            pil_pred:        PSI-generated next frame  (PIL Image, RGB).
+            target_pixels_b: Actual next frame tensor  [3, H, W] float32 [0,1].
+        """
+        import os
+        from PIL import ImageDraw
+
+        # ── Convert ground truth tensor → PIL ────────────────────────────
+        tgt_np = (
+            target_pixels_b.permute(1, 2, 0).cpu().float().numpy()
+        )
+        tgt_np = (tgt_np * 255.0).clip(0, 255).astype(np.uint8)
+        pil_target = Image.fromarray(tgt_np)
+
+        # ── Compute per-pixel L1 for filename and diff panel ─────────────
+        pred_f = np.array(pil_pred).astype(np.float32) / 255.0
+        tgt_f  = tgt_np.astype(np.float32) / 255.0
+        diff   = np.abs(pred_f - tgt_f)                   # [H, W, 3]
+        l1_score = float(diff.mean())
+
+        # Amplify diff ×5 and convert to a visible heatmap (grayscale mapped
+        # to red channel so cold areas stay dark and hot areas go red).
+        diff_amp = (diff.mean(axis=-1, keepdims=True) * 5.0).clip(0.0, 1.0)  # [H,W,1]
+        diff_rgb = np.concatenate([
+            diff_amp,                       # R — amount of error
+            diff_amp * 0.3,                 # G — subtle tint
+            np.zeros_like(diff_amp),        # B
+        ], axis=-1)
+        pil_diff = Image.fromarray((diff_rgb * 255).astype(np.uint8))
+
+        # ── Build 4-panel canvas ──────────────────────────────────────────
+        W, H      = pil_context.size       # PIL: (width, height)
+        HEADER_H  = 22                     # px reserved for label text
+        GAP       = 3                      # px gap between panels
+        N_PANELS  = 4
+        canvas_w  = N_PANELS * W + (N_PANELS - 1) * GAP
+        canvas_h  = H + HEADER_H
+        canvas    = Image.new("RGB", (canvas_w, canvas_h), color=(20, 20, 20))
+
+        panels = [
+            (pil_context, f"Context  (frame {self.nb_context_frames - 1})"),
+            (pil_pred,    "PSI Prediction"),
+            (pil_target,  "Ground Truth"),
+            (pil_diff,    f"Diff \u00d75   L1={l1_score:.4f}"),
+        ]
+
+        draw = ImageDraw.Draw(canvas)
+        for i, (panel, label) in enumerate(panels):
+            x = i * (W + GAP)
+            canvas.paste(panel.resize((W, H), Image.BILINEAR), (x, HEADER_H))
+            # White label text in the dark header strip
+            draw.text((x + 4, 4), label, fill=(230, 230, 230))
+
+        # ── Resolve output folder: viz_dir / <video_name> / ──────────────
+        # Reset the per-video frame counter whenever the video changes.
+        if self.current_video_name != self._prev_video_name:
+            self._current_video_frame_count = 0
+            self._prev_video_name = self.current_video_name
+
+        video_folder = os.path.join(self.viz_dir, self.current_video_name)
+        os.makedirs(video_folder, exist_ok=True)
+
+        filename = (
+            f"f{self._current_video_frame_count:04d}"
+            f"_ctx{self.nb_context_frames:02d}"
+            f"_L1_{l1_score:.4f}"
+            f".png"
+        )
+        canvas.save(os.path.join(video_folder, filename))
+        self._current_video_frame_count += 1
 
     def __repr__(self) -> str:
         p = PSI_PATCH_SIZE

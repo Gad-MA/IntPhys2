@@ -70,6 +70,12 @@ model_kwargs:
     gen_top_k: 1000    # Top-K nucleus (PSI README recommendation for RGB)
     gen_top_p: 1.0     # Top-P nucleus  (1.0 = disabled)
     gen_seed: 42       # RNG seed for reproducible generation
+    # Directory to save real-time visualizations.
+    # Each PSI generation writes one 4-panel PNG immediately:
+    #   [ Context frame | PSI prediction | Ground truth | Diff ×5 ]
+    # Filename encodes sample index, context length, and L1 score.
+    # Set to null (or remove) to disable visualization entirely.
+    viz_dir: ./results/psi0_5/viz/
 
   # Passed as model_kwargs (pretrain_kwargs) to init_module
   pretrain_kwargs:
