@@ -308,35 +308,40 @@ class AnticipativePSIWrapper(nn.Module):
                     seed=self.gen_seed,
                 )
 
-            # ---- DEBUG: log PSI return structure --------------------------------
-            logger.info(f"[PSI DEBUG] type(raw_output)={type(raw_output)}")
-            if isinstance(raw_output, dict):
-                logger.info(f"[PSI DEBUG] outer dict keys={list(raw_output.keys())}")
-                first_val = next(iter(raw_output.values()), None)
-                logger.info(f"[PSI DEBUG] first value type={type(first_val)}")
-                if isinstance(first_val, dict):
-                    logger.info(f"[PSI DEBUG] inner dict keys={list(first_val.keys())}")
-                    first_inner = next(iter(first_val.values()), None)
-                    logger.info(f"[PSI DEBUG] inner dict first value type={type(first_inner)}")
-                elif not isinstance(first_val, Image.Image):
-                    logger.info(f"[PSI DEBUG] first value repr={repr(first_val)[:200]}")
-            elif isinstance(raw_output, (tuple, list)):
-                logger.info(f"[PSI DEBUG] sequence len={len(raw_output)}")
-                if raw_output:
-                    first_val = raw_output[0]
-                    logger.info(f"[PSI DEBUG] first element type={type(first_val)}")
-                    if isinstance(first_val, dict):
-                        logger.info(f"[PSI DEBUG] first element keys={list(first_val.keys())}")
-                    elif not isinstance(first_val, Image.Image):
-                        logger.info(f"[PSI DEBUG] first element repr={repr(first_val)[:200]}")
+            # ---- DEBUG: fully describe what PSI returned ----------------------
+            logger.info(f"[PSI DEBUG] type(raw_output) = {type(raw_output)}")
+            if isinstance(raw_output, (tuple, list)):
+                logger.info(f"[PSI DEBUG] len = {len(raw_output)}")
+                for _i, _elem in enumerate(raw_output):
+                    if isinstance(_elem, Image.Image):
+                        logger.info(f"[PSI DEBUG]   [{_i}] PIL.Image  size={_elem.size}  mode={_elem.mode}")
+                    elif isinstance(_elem, dict):
+                        logger.info(f"[PSI DEBUG]   [{_i}] dict  keys={list(_elem.keys())}")
+                        for _k, _v in _elem.items():
+                            logger.info(f"[PSI DEBUG]       '{_k}': {type(_v)}  {repr(_v)[:120]}")
+                    else:
+                        logger.info(f"[PSI DEBUG]   [{_i}] {type(_elem)}  {repr(_elem)[:120]}")
+            elif isinstance(raw_output, dict):
+                logger.info(f"[PSI DEBUG] dict  keys={list(raw_output.keys())}")
+                for _k, _v in raw_output.items():
+                    if isinstance(_v, Image.Image):
+                        logger.info(f"[PSI DEBUG]   '{_k}': PIL.Image  size={_v.size}  mode={_v.mode}")
+                    elif isinstance(_v, dict):
+                        logger.info(f"[PSI DEBUG]   '{_k}': dict  keys={list(_v.keys())}  {repr(_v)[:120]}")
+                    else:
+                        logger.info(f"[PSI DEBUG]   '{_k}': {type(_v)}  {repr(_v)[:120]}")
             else:
-                logger.info(f"[PSI DEBUG] repr={repr(raw_output)[:200]}")
-            # ---- end DEBUG ------------------------------------------------------
+                logger.info(f"[PSI DEBUG] {repr(raw_output)[:200]}")
+            # ---- end DEBUG ----------------------------------------------------
 
             if isinstance(raw_output, dict):
+                # Keyed by output variable name, e.g. {'rgb2': PIL, ...}
                 raw_output = [raw_output[f"rgb{i}"] for i in range(tgt_start, tgt_end + 1)]
-            elif not isinstance(raw_output, (tuple, list)):
-                raw_output = (raw_output,)
+            elif isinstance(raw_output, (tuple, list)):
+                # Discard any trailing non-image elements (e.g. PSI state dict)
+                raw_output = list(raw_output)[:n_pred]
+            else:
+                raw_output = [raw_output]
 
             pil_preds: list[Image.Image] = []
             for pil in raw_output:
