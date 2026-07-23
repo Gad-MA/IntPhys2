@@ -250,7 +250,10 @@ def extract_losses(
         for CTXT_LEN in context_lengths:
             logger.info("="*40)
             model.nb_context_frames=CTXT_LEN
-            model.frames_per_clip = CTXT_LEN + num_frames_to_pred if num_frames_to_pred != -1 else frames_per_clip
+            model.frames_per_clip = min(
+                CTXT_LEN + num_frames_to_pred if num_frames_to_pred != -1 else frames_per_clip,
+                clip.shape[2],  # clamp to actual loaded clip length
+            )
             try:
                 model.grid_depth = model.frames_per_clip // model.encoder.tubelet_size
             except:
@@ -284,7 +287,10 @@ def extract_losses(
                 for ctxt in [2*i for i in range(1,CTXT_LEN//2)]:
                     #Update wrapper
                     model.nb_context_frames=ctxt
-                    model.frames_per_clip = ctxt + num_frames_to_pred if num_frames_to_pred != -1 else frames_per_clip
+                    model.frames_per_clip = min(
+                        ctxt + num_frames_to_pred if num_frames_to_pred != -1 else frames_per_clip,
+                        clip.shape[2],  # clamp to actual loaded clip length
+                    )
                     try:
                         model.grid_depth = model.frames_per_clip // model.encoder.tubelet_size
                     except:
@@ -309,7 +315,10 @@ def extract_losses(
 
             #Update wrapper
             model.nb_context_frames=CTXT_LEN
-            model.frames_per_clip = CTXT_LEN + num_frames_to_pred if num_frames_to_pred != -1 else frames_per_clip
+            model.frames_per_clip = min(
+                CTXT_LEN + num_frames_to_pred if num_frames_to_pred != -1 else frames_per_clip,
+                clip.shape[2],  # clamp to actual loaded clip length
+            )
             logger.info(f"{num_frames_to_pred} frames to pred, {model.frames_per_clip} total frames ")
             try:
                 model.grid_depth = model.frames_per_clip // model.encoder.tubelet_size
