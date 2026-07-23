@@ -308,8 +308,13 @@ class AnticipativePSIWrapper(nn.Module):
                     seed=self.gen_seed,
                 )
 
-            # PSI returns a tuple — one PIL Image per output variable.
-            if not isinstance(raw_output, (tuple, list)):
+            # PSI return type depends on the number of outputs:
+            #   single output  → PIL Image (or 1-tuple)
+            #   multiple outputs → dict keyed by output variable name
+            #                      e.g. {'rgb2': <PIL>, 'rgb3': <PIL>, ...}
+            if isinstance(raw_output, dict):
+                raw_output = [raw_output[f"rgb{i}"] for i in range(tgt_start, tgt_end + 1)]
+            elif not isinstance(raw_output, (tuple, list)):
                 raw_output = (raw_output,)
 
             pil_preds: list[Image.Image] = []
