@@ -33,22 +33,18 @@ experiment:
     # PSI handles its own dtype (bfloat16) internally.
     # Disable autocast in the harness to avoid bfloat16 PIL conversion issues.
     use_bfloat16: false
-    frames_per_clip: 16
-    # context_lengths must all be < frames_per_clip (here: < 16) so that each
-    # entry gives a distinct context frame and a distinct target frame.
-    #
-    # With frames_per_clip=16, the mapping is:
-    #   context_length → ctx_idx (last context frame) → tgt_idx (target frame)
-    #   4  → frame  3 → frame  4
-    #   6  → frame  5 → frame  6
-    #   8  → frame  7 → frame  8
-    #   10 → frame  9 → frame 10
-    #   12 → frame 11 → frame 12
-    #   14 → frame 13 → frame 14
-    #
-    # [16, 32, 48, 56] would all clamp to frame 14 (= T-2) and produce
-    # identical losses — do NOT use those with frames_per_clip=16.
-    context_lengths: [4, 6, 8, 10, 12, 14]
+    # PSI's notation parser only accepts single-digit time indices (rgb0–rgb9),
+    # so the total number of frames (context + predicted) must be ≤ 10.
+    # frames_per_clip=10 ensures we never exceed rgb9.
+    frames_per_clip: 10
+    # context_lengths must be even (tubelet_size=2) and < frames_per_clip (< 10).
+    # With frames_per_clip=10:
+    #   context_length → frames predicted
+    #   2 → 8  (rgb0,rgb1 -> rgb2..rgb9)
+    #   4 → 6  (rgb0..rgb3 -> rgb4..rgb9)
+    #   6 → 4  (rgb0..rgb5 -> rgb6..rgb9)
+    #   8 → 2  (rgb0..rgb7 -> rgb8,rgb9)
+    context_lengths: [2, 4, 6, 8]
     frame_steps: 10        # Sample every 10th frame from the raw video
     num_frames_to_pred: -1 # Use full frames_per_clip window
     dataset: intphys2-debug  # Start here; switch to intphys2-main when ready
