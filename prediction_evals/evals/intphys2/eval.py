@@ -308,8 +308,11 @@ def extract_losses(
                         l = F.l1_loss(preds,targets,reduction="none").mean((1,2)).detach().to(device)
                         losses_beginning.append(l)
 
-                loss_beginning = torch.stack(losses_beginning)
-                loss_beginning = rearrange(loss_beginning,"nvid ctxt -> ctxt nvid")
+                if losses_beginning:
+                    loss_beginning = torch.stack(losses_beginning)
+                    loss_beginning = rearrange(loss_beginning,"nvid ctxt -> ctxt nvid")
+                else:
+                    loss_beginning = None
                 logger.info("Finished doing smaller contexts")
                 
 
@@ -356,7 +359,7 @@ def extract_losses(
 
             loss = F.l1_loss(preds,targets,reduction="none").mean((2,3)).detach().to(device)
             logger.info(f"Loss: {loss.shape}")
-            if max_context_mode:
+            if max_context_mode and loss_beginning is not None:
                 loss = torch.hstack([loss_beginning,loss])
             all_losses_ctxt.append(loss)
 
