@@ -308,40 +308,22 @@ class AnticipativePSIWrapper(nn.Module):
                     seed=self.gen_seed,
                 )
 
-            # ---- DEBUG: fully describe what PSI returned ----------------------
-            logger.info(f"[PSI DEBUG] type(raw_output) = {type(raw_output)}")
-            if isinstance(raw_output, (tuple, list)):
-                logger.info(f"[PSI DEBUG] len = {len(raw_output)}")
-                for _i, _elem in enumerate(raw_output):
-                    if isinstance(_elem, Image.Image):
-                        logger.info(f"[PSI DEBUG]   [{_i}] PIL.Image  size={_elem.size}  mode={_elem.mode}")
-                    elif isinstance(_elem, dict):
-                        logger.info(f"[PSI DEBUG]   [{_i}] dict  keys={list(_elem.keys())}")
-                        for _k, _v in _elem.items():
-                            logger.info(f"[PSI DEBUG]       '{_k}': {type(_v)}  {repr(_v)[:120]}")
-                    else:
-                        logger.info(f"[PSI DEBUG]   [{_i}] {type(_elem)}  {repr(_elem)[:120]}")
-            elif isinstance(raw_output, dict):
-                logger.info(f"[PSI DEBUG] dict  keys={list(raw_output.keys())}")
-                for _k, _v in raw_output.items():
-                    if isinstance(_v, Image.Image):
-                        logger.info(f"[PSI DEBUG]   '{_k}': PIL.Image  size={_v.size}  mode={_v.mode}")
-                    elif isinstance(_v, dict):
-                        logger.info(f"[PSI DEBUG]   '{_k}': dict  keys={list(_v.keys())}  {repr(_v)[:120]}")
-                    else:
-                        logger.info(f"[PSI DEBUG]   '{_k}': {type(_v)}  {repr(_v)[:120]}")
-            else:
-                logger.info(f"[PSI DEBUG] {repr(raw_output)[:200]}")
-            # ---- end DEBUG ----------------------------------------------------
-
+            # PSI return convention:
+            #   single output  → PIL Image directly
+            #   multiple outputs → tuple of N PIL Images followed by a trailing
+            #                      {'_sequential_masks': ...} state dict that
+            #                      PSI appends unconditionally.
+            # Normalise to a list and take exactly the first n_pred elements.
             if isinstance(raw_output, dict):
                 # Keyed by output variable name, e.g. {'rgb2': PIL, ...}
                 raw_output = [raw_output[f"rgb{i}"] for i in range(tgt_start, tgt_end + 1)]
             elif isinstance(raw_output, (tuple, list)):
-                # Discard any trailing non-image elements (e.g. PSI state dict)
+                # Drop trailing metadata (e.g. _sequential_masks state dict)
                 raw_output = list(raw_output)[:n_pred]
             else:
                 raw_output = [raw_output]
+
+
 
             pil_preds: list[Image.Image] = []
             for pil in raw_output:
