@@ -308,10 +308,31 @@ class AnticipativePSIWrapper(nn.Module):
                     seed=self.gen_seed,
                 )
 
-            # PSI return type depends on the number of outputs:
-            #   single output  → PIL Image (or 1-tuple)
-            #   multiple outputs → dict keyed by output variable name
-            #                      e.g. {'rgb2': <PIL>, 'rgb3': <PIL>, ...}
+            # ---- DEBUG: log PSI return structure --------------------------------
+            logger.info(f"[PSI DEBUG] type(raw_output)={type(raw_output)}")
+            if isinstance(raw_output, dict):
+                logger.info(f"[PSI DEBUG] outer dict keys={list(raw_output.keys())}")
+                first_val = next(iter(raw_output.values()), None)
+                logger.info(f"[PSI DEBUG] first value type={type(first_val)}")
+                if isinstance(first_val, dict):
+                    logger.info(f"[PSI DEBUG] inner dict keys={list(first_val.keys())}")
+                    first_inner = next(iter(first_val.values()), None)
+                    logger.info(f"[PSI DEBUG] inner dict first value type={type(first_inner)}")
+                elif not isinstance(first_val, Image.Image):
+                    logger.info(f"[PSI DEBUG] first value repr={repr(first_val)[:200]}")
+            elif isinstance(raw_output, (tuple, list)):
+                logger.info(f"[PSI DEBUG] sequence len={len(raw_output)}")
+                if raw_output:
+                    first_val = raw_output[0]
+                    logger.info(f"[PSI DEBUG] first element type={type(first_val)}")
+                    if isinstance(first_val, dict):
+                        logger.info(f"[PSI DEBUG] first element keys={list(first_val.keys())}")
+                    elif not isinstance(first_val, Image.Image):
+                        logger.info(f"[PSI DEBUG] first element repr={repr(first_val)[:200]}")
+            else:
+                logger.info(f"[PSI DEBUG] repr={repr(raw_output)[:200]}")
+            # ---- end DEBUG ------------------------------------------------------
+
             if isinstance(raw_output, dict):
                 raw_output = [raw_output[f"rgb{i}"] for i in range(tgt_start, tgt_end + 1)]
             elif not isinstance(raw_output, (tuple, list)):
@@ -336,6 +357,7 @@ class AnticipativePSIWrapper(nn.Module):
                 )
 
             preds_per_sample.append(pil_preds)
+
 
         # ------------------------------------------------------------------ #
         # Visualization: save context.gif and prediction.gif per batch sample
