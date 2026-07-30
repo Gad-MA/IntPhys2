@@ -252,8 +252,9 @@ class AnticipativePSIWrapper(nn.Module):
         n_pred    = tgt_end - tgt_start + 1               # ≥ 1 by construction
 
         logger.info(
-            f"PSI forward: T={T}, n_context={n_context}, "
-            f"n_pred={n_pred}, notation-range=rgb{tgt_start}..rgb{tgt_end}"
+            f"PSI forward [Option C — autoregressive chaining]: "
+            f"T={T}, n_context={n_context}, n_pred={n_pred}, "
+            f"max_ctx_window={min(n_context + n_pred - 1, 9)}"
         )
 
         # ------------------------------------------------------------------ #
@@ -271,23 +272,14 @@ class AnticipativePSIWrapper(nn.Module):
         ]
 
         # ------------------------------------------------------------------ #
-        # Build PSI multi-output notation
-        # e.g. n_context=4, predict frames 4..15:
-        #   "rgb0,rgb1,rgb2,rgb3->rgb4,rgb5,...,rgb15"
+        # Build GT context PIL images for each batch item.
+        # gt_pils[b][i] = PIL Image of GT frame i for sample b.
         # ------------------------------------------------------------------ #
-        in_side  = ",".join(f"rgb{i}" for i in range(n_context))
-        out_side = ",".join(f"rgb{i}" for i in range(tgt_start, tgt_end + 1))
-        notation = f"{in_side}->{out_side}"
+        MAX_CTX = 9   # PSI accepts rgb0..rgb8 -> rgb9 (9 context + 1 output = 10 total)
 
-        # ------------------------------------------------------------------ #
-        # Run PSI sequentially over batch samples (PSI is not natively batched)
-        # preds_per_sample[b] = list of n_pred PIL Images
-        # ------------------------------------------------------------------ #
-        preds_per_sample: list[list[Image.Image]] = []
-
+        gt_pils: list[list[Image.Image]] = []
         for b in range(B):
-            # Convert every context frame to a uint8 PIL Image.
-            rgb_kwargs: dict[str, Image.Image] = {}
+            frames: list[Image.Image] = []
             for i in range(n_context):
                 frame_np = (
                     context_pixels[i][b]    # [3, H, W]
@@ -296,54 +288,82 @@ class AnticipativePSIWrapper(nn.Module):
                     .numpy()
                 )
                 frame_np = (frame_np * 255.0).clip(0, 255).astype(np.uint8)
-                rgb_kwargs[f"rgb{i}"] = Image.fromarray(frame_np)
+                frames.append(Image.fromarray(frame_np))
+            gt_pils.append(frames)
 
-            with torch.no_grad():
-                raw_output = self.psi_predictor.generate(
-                    notation,
-                    **rgb_kwargs,
-                    temp=self.gen_temp,
-                    top_k=self.gen_top_k,
-                    top_p=self.gen_top_p,
-                    seed=self.gen_seed,
+        # ------------------------------------------------------------------ #
+        # Autoregressive chaining — Option C
+        # One generate() call per future frame.  Generated frames feed back
+        # into the context pool for the next step.
+        # Rolling window: when the pool exceeds MAX_CTX frames the oldest
+        # entry is dropped so the notation stays within rgb0..rgb{MAX_CTX-1}.
+        #
+        # Step j predicts frame (tgt_start + j):
+        #   pool    = GT frames 0..n_context-1  +  generated frames 0..j-1
+        #   ctx_win = pool[ max(0, len(pool)-MAX_CTX) : ]   (≤ MAX_CTX frames)
+        #   notation: rgb0,..,rgb{ctx_size-1} -> rgb{ctx_size}
+        # ------------------------------------------------------------------ #
+        preds_per_sample: list[list[Image.Image]] = []
+
+        for b in range(B):
+            pool: list[Image.Image] = list(gt_pils[b])   # start with GT context
+            gen_pils: list[Image.Image] = []
+
+            for j in range(n_pred):
+                # Determine context window
+                pool_start = max(0, len(pool) - MAX_CTX)
+                ctx_win    = pool[pool_start:]
+                ctx_size   = len(ctx_win)
+
+                in_side  = ",".join(f"rgb{k}" for k in range(ctx_size))
+                out_var  = f"rgb{ctx_size}"
+                notation = f"{in_side}->{out_var}"
+
+                rgb_kwargs: dict[str, Image.Image] = {
+                    f"rgb{k}": ctx_win[k] for k in range(ctx_size)
+                }
+
+                logger.info(
+                    f"PSI autoregressive step j={j}/{n_pred-1}  "
+                    f"pool_start={pool_start}  ctx={ctx_size}  notation={notation}"
                 )
 
-            # PSI return convention:
-            #   single output  → PIL Image directly
-            #   multiple outputs → tuple of N PIL Images followed by a trailing
-            #                      {'_sequential_masks': ...} state dict that
-            #                      PSI appends unconditionally.
-            # Normalise to a list and take exactly the first n_pred elements.
-            if isinstance(raw_output, dict):
-                # Keyed by output variable name, e.g. {'rgb2': PIL, ...}
-                raw_output = [raw_output[f"rgb{i}"] for i in range(tgt_start, tgt_end + 1)]
-            elif isinstance(raw_output, (tuple, list)):
-                # Drop trailing metadata (e.g. _sequential_masks state dict)
-                raw_output = list(raw_output)[:n_pred]
-            else:
-                raw_output = [raw_output]
-
-
-
-            pil_preds: list[Image.Image] = []
-            for pil in raw_output:
-                if not isinstance(pil, Image.Image):
-                    raise TypeError(
-                        f"PSI generate() returned unexpected type {type(pil)}; "
-                        f"expected PIL.Image.Image. notation='{notation}'"
+                with torch.no_grad():
+                    raw = self.psi_predictor.generate(
+                        notation,
+                        **rgb_kwargs,
+                        temp=self.gen_temp,
+                        top_k=self.gen_top_k,
+                        top_p=self.gen_top_p,
+                        seed=self.gen_seed,
                     )
-                pil = pil.convert("RGB")
-                if pil.size != (W, H):
-                    pil = pil.resize((W, H), Image.BILINEAR)
-                pil_preds.append(pil)
 
-            if len(pil_preds) != n_pred:
-                raise ValueError(
-                    f"PSI returned {len(pil_preds)} frames but {n_pred} were "
-                    f"expected (notation='{notation}')"
-                )
+                # PSI return convention for single output:
+                #   PIL Image directly  (most common)
+                #   OR 1-tuple + trailing _sequential_masks dict
+                # For multi-output (shouldn't happen here but guard anyway):
+                #   tuple of N PIL Images + trailing dict
+                if isinstance(raw, dict):
+                    pred_pil = raw[out_var]
+                elif isinstance(raw, (tuple, list)):
+                    pred_pil = raw[0]   # first element is the predicted PIL
+                else:
+                    pred_pil = raw
 
-            preds_per_sample.append(pil_preds)
+                if not isinstance(pred_pil, Image.Image):
+                    raise TypeError(
+                        f"PSI generate() returned unexpected type {type(pred_pil)} "
+                        f"at step j={j}; notation='{notation}'"
+                    )
+
+                pred_pil = pred_pil.convert("RGB")
+                if pred_pil.size != (W, H):
+                    pred_pil = pred_pil.resize((W, H), Image.BILINEAR)
+
+                gen_pils.append(pred_pil)
+                pool.append(pred_pil)   # feed generated frame back into pool
+
+            preds_per_sample.append(gen_pils)
 
 
         # ------------------------------------------------------------------ #
