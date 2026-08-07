@@ -36,16 +36,20 @@ experiment:
     # With Option C (autoregressive chaining), PSI is no longer constrained by
     # the single-digit index limit — each generate() call predicts one frame
     # at a time using a rolling context window capped at 9 frames.
-    # frames_per_clip and context_lengths now match vjepa2_vitl_fpc64_256.yaml
-    # for a direct apples-to-apples comparison.
-    frames_per_clip: 64
-    # Matches vjepa2_vitl_fpc64_256.yaml exactly.
+    # frames_per_clip is set to 16 to keep inference tractable (worst case:
+    # CTXT_LEN=4 → 12 autoregressive calls per window).
+    # Note: context_lengths > 9 are valid — the rolling window silently drops
+    # the oldest GT frames so PSI always sees at most 9 frames, but the
+    # starting position within the clip shifts with each longer context.
+    frames_per_clip: 16
     # Each entry: n_pred = frames_per_clip - context_length frames predicted.
-    #   16 → 48 frames predicted
-    #   32 → 32 frames predicted
-    #   48 → 16 frames predicted
-    #   56 →  8 frames predicted
-    context_lengths: [16, 32, 48, 56]
+    #    4 → 12 frames predicted
+    #    6 → 10 frames predicted
+    #    8 →  8 frames predicted
+    #   10 →  6 frames predicted
+    #   12 →  4 frames predicted
+    #   14 →  2 frames predicted
+    context_lengths: [4, 6, 8, 10, 12, 14]
     frame_steps: 10        # Sample every 10th frame from the raw video
     num_frames_to_pred: -1 # Use full frames_per_clip window
 
