@@ -12,11 +12,11 @@ import pprint
 import sys
 import time
 
-# The RCS cluster does not set SLURM_CLUSTER_NAME automatically.
-# Set it here so get_cluster() in utils.py resolves correctly in both
-# the launcher process and the submitit worker that unpickles Trainer.
-# !! CHANGE THIS if you switch clusters !!
-CLUSTER_NAME = "rcs"
+# !! CHANGE THESE if you switch clusters !!
+CLUSTER_NAME = "rcs"   # The RCS cluster does not set SLURM_CLUSTER_NAME automatically;
+                        # get_cluster() in utils.py reads this to resolve dataset paths.
+SLURM_MEM    = "24G"   # Total RAM per node. RCS minimum is 29 GB (gpu-02/03/04);
+                        # 24 G leaves ~5 GB headroom for the OS.
 os.environ.setdefault("SLURM_CLUSTER_NAME", CLUSTER_NAME)
 
 import submitit
@@ -120,10 +120,7 @@ def launch_evals_with_parsed_args(
         slurm_account=account,
         slurm_partition=partition,
         slurm_qos=qos,
-        # RCS cluster node RAM: gpu-02/03/04 have 29 GB, gpu-05 60 GB,
-        # gpu-06 76 GB, gpu-07 122 GB.  Use total mem per node (not per GPU)
-        # so the request fits the 29 GB nodes (24 GB + ~5 GB OS headroom).
-        slurm_mem="24G",
+        slurm_mem=SLURM_MEM,
         timeout_min=timeout,
         nodes=nodes,
         tasks_per_node=tasks_per_node,

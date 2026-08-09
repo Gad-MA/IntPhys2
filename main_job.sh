@@ -95,7 +95,7 @@ echo "  Python: $(python --version)  |  pip: $(pip --version | awk '{print $2}')
 
 # Always (re-)install requirements so any new deps are picked up after a pull
 echo "  Installing / updating requirements..."
-pip install --upgrade pip
+# pip install --upgrade pip
 pip install -r "$EVAL_ROOT/requirements.txt"
 echo "  Requirements satisfied."
 
