@@ -120,8 +120,10 @@ def launch_evals_with_parsed_args(
         slurm_account=account,
         slurm_partition=partition,
         slurm_qos=qos,
-        slurm_mem_per_gpu="120G",
-        #slurm_constraint="ampere80gb",
+        # RCS cluster node RAM: gpu-02/03/04 have 29 GB, gpu-05 60 GB,
+        # gpu-06 76 GB, gpu-07 122 GB.  Use total mem per node (not per GPU)
+        # so the request fits the 29 GB nodes (24 GB + ~5 GB OS headroom).
+        slurm_mem="24G",
         timeout_min=timeout,
         nodes=nodes,
         tasks_per_node=tasks_per_node,
