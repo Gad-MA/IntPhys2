@@ -5,17 +5,17 @@
 #   cd prediction_evals/
 #   python -m evals.main --devices cuda:0 --fname evals/intphys2/configs/psi.yaml
 #
-# USAGE — SLURM cluster:
+# USAGE — SLURM cluster (RCS, 6 nodes / 7 GPUs):
 #   python -m evals.main_distributed \
 #     --fname evals/intphys2/configs/psi.yaml \
-#     --folder ./logs --partition YOUR_PARTITION
+#     --folder ./logs --partition gpu --ntasks 7
 #
 # NOTE: PSI generates frames autoregressively (one token at a time), so
 # inference is slower than V-JEPA / VideoMAEv2.  Start on intphys2-debug
 # (60 videos) to verify correctness before switching to intphys2-main.
 
 # Cluster / distributed settings
-nodes: 1
+nodes: 6
 tasks_per_node: 1   # Use 1 GPU per node; PSI is memory-intensive
 
 tag: default
@@ -41,7 +41,7 @@ experiment:
     # Note: context_lengths > 9 are valid — the rolling window silently drops
     # the oldest GT frames so PSI always sees at most 9 frames, but the
     # starting position within the clip shifts with each longer context.
-    frames_per_clip: 16
+    frames_per_clip: 10
     # Each entry: n_pred = frames_per_clip - context_length frames predicted.
     #    4 → 12 frames predicted
     #    6 → 10 frames predicted
@@ -49,7 +49,7 @@ experiment:
     #   10 →  6 frames predicted
     #   12 →  4 frames predicted
     #   14 →  2 frames predicted
-    context_lengths: [4, 6, 8, 10, 12, 14]
+    context_lengths: [2, 4, 6, 8]
     frame_steps: 10        # Sample every 10th frame from the raw video
     num_frames_to_pred: -1 # Use full frames_per_clip window
 
