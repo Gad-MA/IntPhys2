@@ -15,7 +15,7 @@
 # (60 videos) to verify correctness before switching to intphys2-main.
 
 # Cluster / distributed settings
-nodes: 6
+nodes: 4
 tasks_per_node: 1   # Use 1 GPU per node; PSI is memory-intensive
 
 tag: default
