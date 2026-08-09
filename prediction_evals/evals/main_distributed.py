@@ -12,6 +12,13 @@ import pprint
 import sys
 import time
 
+# The RCS cluster does not set SLURM_CLUSTER_NAME automatically.
+# Set it here so get_cluster() in utils.py resolves correctly in both
+# the launcher process and the submitit worker that unpickles Trainer.
+# !! CHANGE THIS if you switch clusters !!
+CLUSTER_NAME = "rcs"
+os.environ.setdefault("SLURM_CLUSTER_NAME", CLUSTER_NAME)
+
 import submitit
 import yaml
 
@@ -120,6 +127,9 @@ def launch_evals_with_parsed_args(
         tasks_per_node=tasks_per_node,
         cpus_per_task=10,
         gpus_per_node=tasks_per_node,
+        # Propagate cluster identity to the batch job shell so that any
+        # code path that reads the env var directly also sees the right value.
+        slurm_setup=[f"export SLURM_CLUSTER_NAME={CLUSTER_NAME}"],
     )
 
     if exclude_nodes is not None:

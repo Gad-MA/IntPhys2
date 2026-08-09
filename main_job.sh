@@ -25,6 +25,18 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Cluster identity
+# ---------------------------------------------------------------------------
+# The RCS cluster does not set SLURM_CLUSTER_NAME automatically.
+# Export it here so that get_cluster() in utils.py resolves to "rcs" and
+# uses the correct dataset paths from DATASET_PATHS_BY_CLUSTER.
+# ---------------------------------------------------------------------------
+# !! CHANGE THIS if you switch clusters !!
+# ---------------------------------------------------------------------------
+CLUSTER_NAME="rcs"
+export SLURM_CLUSTER_NAME="$CLUSTER_NAME"
+
+# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 REPO_URL="https://github.com/Gad-MA/IntPhys2.git"
@@ -39,7 +51,7 @@ mkdir -p "$HOME/logs"
 
 echo "=========================================="
 echo " IntPhys2 PSI-0.5 benchmark launcher"
-echo " Cluster  : rcs"
+echo " Cluster  : $CLUSTER_NAME"
 echo " Project  : $PROJECT_ROOT"
 echo " Venv     : $VENV_DIR"
 echo " Config   : $CONFIG"
