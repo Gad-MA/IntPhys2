@@ -42,7 +42,7 @@ export SLURM_CLUSTER_NAME="$CLUSTER_NAME"
 REPO_URL="https://github.com/Gad-MA/IntPhys2.git"
 PROJECT_ROOT="$HOME/IntPhys2"
 EVAL_ROOT="$PROJECT_ROOT/prediction_evals"
-VENV_DIR="$HOME/venvs/intphys2"
+VENV_DIR="$HOME/venvs/IntPhys2"
 CONFIG="$EVAL_ROOT/evals/intphys2/configs/psi.yaml"
 SUBMITIT_LOGS="$EVAL_ROOT/logs/submitit"
 RESULTS_DIR="$EVAL_ROOT/results/psi0_5"
@@ -95,8 +95,8 @@ echo "  Python: $(python --version)  |  pip: $(pip --version | awk '{print $2}')
 
 # Always (re-)install requirements so any new deps are picked up after a pull
 echo "  Installing / updating requirements..."
-pip install --upgrade pip --quiet
-pip install -r "$EVAL_ROOT/requirements.txt" --quiet
+pip install --upgrade pip
+pip install -r "$EVAL_ROOT/requirements.txt"
 echo "  Requirements satisfied."
 
 # ---------------------------------------------------------------------------
