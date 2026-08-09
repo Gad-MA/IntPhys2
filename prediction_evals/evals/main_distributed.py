@@ -129,11 +129,6 @@ def launch_evals_with_parsed_args(
         # Propagate cluster identity to the batch job shell so that any
         # code path that reads the env var directly also sees the right value.
         slurm_setup=[f"export SLURM_CLUSTER_NAME={CLUSTER_NAME}"],
-        # The RCS cluster's srun strips the parent environment by default,
-        # so SLURM_JOB_ID never reaches the Python worker and submitit raises
-        # "Could not figure out which environment the job is running in".
-        # --export=ALL forces srun to forward the full environment to each task.
-        slurm_srun_args=["--export=ALL"],
     )
 
     if exclude_nodes is not None:
