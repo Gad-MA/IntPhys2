@@ -1,3 +1,15 @@
+# =============================================================================
+# DEPRECATED — use default_wrapper.py instead.
+#
+# This file contains the "Option C — autoregressive chaining" implementation
+# of the PSI-0.5 wrapper.  It calls psi_predictor.generate() once per future
+# frame and feeds each generated frame back into the rolling context pool.
+#
+# Replaced by default_wrapper.py, which delegates multi-frame prediction to
+# PSI's native single-call capability (one generate() call per window) and is
+# designed for frames_per_clip = 10.
+# =============================================================================
+
 """
 Copyright (c) Facebook, Inc. and its affiliates.
 All rights reserved.
@@ -6,20 +18,7 @@ This source code is licensed under the license found in the
 LICENSE file in the root directory of this source tree.
 ------------------------------------------------------------------------------
 
-# ============================================================================
-# INTENDED FOR frames_per_clip = 10  (see evals/intphys2/configs/psi.yaml)
-#
-# With frames_per_clip = 10 every (context_length, n_pred) pair satisfies
-#   context_length + n_pred == 10  ≤  PSI's 10-token hard limit
-# so all frames to predict can be requested in a SINGLE generate() call:
-#   notation: "rgb0,...,rgb{ctx-1}->rgb{ctx},...,rgb9"
-#
-# For other frames_per_clip values where context_length + n_pred > 10 you
-# must use the autoregressive-chaining wrapper (default_wrapper_ar.py).
-# ============================================================================
-
 PSI-0.5 wrapper for IntPhys2 prediction-based evaluation.
-Uses PSI's native multi-frame prediction: one generate() call per window.
 
 modelcustom API requirements (same as all other wrappers in this repo):
 
@@ -39,24 +38,17 @@ PSI-0.5 is an autoregressive transformer that predicts future frames
 token-by-token in a discrete visual codebook.  The IntPhys2 harness expects
 a (preds, targets) pair in a continuous patch embedding space.
 
-Multi-frame prediction strategy — native single call:
+Multi-frame prediction strategy (matching V-JEPA / VideoMAEv2):
 
   1. Extract all context frames (frames 0 … n_context-1) → fed to PSI.
-  2. Build notation: "rgb0,...,rgb{ctx-1}->rgb{ctx},...,rgb{T-1}"
-  3. Call psi_predictor.generate(notation, rgb0=…, rgb1=…, …) ONCE.
-     PSI returns all n_pred predicted PIL Images in a single call.
-  4. Patchify each predicted frame AND each ground-truth future frame with
+  2. PSI.generate("rgb0,...,rgb{ctx}->rgb{tgt_start},...,rgb{tgt_end}", ...)
+       → returns a tuple of n_pred PIL Images in a single call.
+  3. Patchify each predicted frame AND each ground-truth future frame with
      per-patch normalisation (VideoMAEv2 convention).
-  5. Concatenate across all predicted frames:
+  4. Concatenate across all predicted frames:
          preds   = cat([patchify(pred_j) for j], dim=1)  → [B, n_pred*N, D]
          targets = cat([patchify(gt_j)   for j], dim=1)  → [B, n_pred*N, D]
-  6. Return (preds, targets); harness computes F.l1_loss(...).mean((1,2)).
-
-Constraint:
-  PSI supports at most 10 tokens total (context + output).
-  With frames_per_clip=10 this is always satisfied:
-      context_length + n_pred = frames_per_clip = 10  ✓
-  An AssertionError is raised at runtime if this invariant is violated.
+  5. Return (preds, targets); harness computes F.l1_loss(...).mean((1,2)).
 
 Frames-to-predict behaviour (controlled by num_frames_to_pred in the config):
   - num_frames_to_pred == -1  : predict ALL remaining frames after the context.
@@ -65,6 +57,10 @@ Frames-to-predict behaviour (controlled by num_frames_to_pred in the config):
     eval.py sets model.frames_per_clip = nb_context_frames + K before
     calling unfold(), so the clips fed to forward() are already the right
     length.  n_pred = T - n_context = K automatically.
+  - Safety clamp: if num_frames_to_pred exceeds what is actually available
+    in the clip (T - n_context), n_pred is clamped down to the maximum
+    available (≥ 1).  eval.py applies an analogous clip-length clamp before
+    the unfold so that 0-window situations are avoided.
 
 Visualization:
   Two animated GIFs are saved per window (if viz_dir is set):
@@ -101,11 +97,10 @@ logger.setLevel(logging.INFO)
 # For 224×224 input: 14×14 = 196 patches per frame, each 16×16×3 = 768 dims.
 PSI_PATCH_SIZE = 16
 
-# Maximum number of tokens PSI can handle in a single generate() call.
-# This equals max_context_frames + max_output_frames = 9 + 1 … or any split
-# summing to PSI_MAX_TOKENS (the model was trained on sequences of this length).
-PSI_MAX_TOKENS = 10
 
+# ---------------------------------------------------------------------------
+# Public entry point called by eval.py's init_module()
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # HuggingFace access token for downloading gated models (e.g. PSI-0.5).
@@ -115,10 +110,6 @@ PSI_MAX_TOKENS = 10
 HF_TOKEN = None  # e.g. "hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 
 
-# ---------------------------------------------------------------------------
-# Public entry point called by eval.py's init_module()
-# ---------------------------------------------------------------------------
-
 def init_module(
     frames_per_clip: int,
     nb_context_frames: int,
@@ -126,15 +117,13 @@ def init_module(
     model_kwargs: dict,
     wrapper_kwargs: dict,
     **kwargs,
-) -> "NativePSIWrapper":
+) -> "AnticipativePSIWrapper":
     """
     Load PSI-0.5 from HuggingFace (or a local path) and return a wrapped
     nn.Module compatible with the IntPhys2 prediction eval harness.
 
     Args:
-        frames_per_clip:    Total frames per sliding window.
-                            Must be ≤ PSI_MAX_TOKENS (10) so that
-                            context_length + n_pred ≤ 10 always holds.
+        frames_per_clip:    Total frames per sliding window (e.g. 16).
         nb_context_frames:  Initial context length (mutated at runtime).
         checkpoint:         HuggingFace repo ID or local directory.
         model_kwargs:       Contents of the YAML ``pretrain_kwargs`` block.
@@ -168,7 +157,7 @@ def init_module(
 
     resolution = (model_kwargs or {}).get("resolution", 224)
 
-    model = NativePSIWrapper(
+    model = AnticipativePSIWrapper(
         psi_predictor=psi_predictor,
         frames_per_clip=frames_per_clip,
         nb_context_frames=nb_context_frames,
@@ -183,16 +172,10 @@ def init_module(
 # Wrapper class
 # ---------------------------------------------------------------------------
 
-class NativePSIWrapper(nn.Module):
+class AnticipativePSIWrapper(nn.Module):
     """
     Wraps PSI-0.5 (``PSI2Predictor``) as a multi-frame prediction-surprise
     module compatible with V-JEPA / VideoMAEv2's evaluation protocol.
-
-    Uses PSI's native multi-frame generation: all future frames within a
-    window are requested in a SINGLE generate() call.
-
-    Designed for frames_per_clip = 10 (see psi.yaml).  The wrapper asserts
-    at forward time that context_length + n_pred ≤ PSI_MAX_TOKENS (10).
 
     The eval loop updates three *mutable* attributes before each forward pass:
 
@@ -208,7 +191,7 @@ class NativePSIWrapper(nn.Module):
     def __init__(
         self,
         psi_predictor,
-        frames_per_clip: int = 10,
+        frames_per_clip: int = 16,
         nb_context_frames: int = 8,
         resolution: int = 224,
         gen_temp: float = 1.0,
@@ -283,126 +266,137 @@ class NativePSIWrapper(nn.Module):
         x_f32 = x.float()
 
         # ------------------------------------------------------------------ #
-        # Compute frame indices.
+        # Compute frame indices
         # Clamp n_context so there is always at least 1 frame to predict.
+        # This also handles the edge case where num_frames_to_pred is set
+        # to a value exceeding the available clip length.
         # ------------------------------------------------------------------ #
-        n_context = min(self.nb_context_frames, T - 1)   # ≥ 1 context, ≤ T-1
+        n_context = min(self.nb_context_frames, T - 1)   # ≥ 1 context frame, ≤ T-1
         tgt_start = n_context                             # index of first future frame
         tgt_end   = T - 1                                 # index of last future frame
         n_pred    = tgt_end - tgt_start + 1               # ≥ 1 by construction
 
-        # ------------------------------------------------------------------ #
-        # Enforce the PSI_MAX_TOKENS constraint.
-        # With frames_per_clip=10: n_context + n_pred == T == 10  ✓
-        # ------------------------------------------------------------------ #
-        assert n_context + n_pred <= PSI_MAX_TOKENS, (
-            f"NativePSIWrapper requires n_context + n_pred ≤ {PSI_MAX_TOKENS} "
-            f"(PSI's token limit), but got n_context={n_context}, "
-            f"n_pred={n_pred} (sum={n_context + n_pred}). "
-            f"Use default_wrapper_ar.py for frames_per_clip > {PSI_MAX_TOKENS}."
-        )
-
-        # Build the PSI notation for native multi-frame prediction:
-        #   "rgb0,rgb1,...,rgb{ctx-1}->rgb{ctx},rgb{ctx+1},...,rgb{T-1}"
-        in_vars   = ",".join(f"rgb{k}" for k in range(n_context))
-        out_vars  = ",".join(f"rgb{n_context + j}" for j in range(n_pred))
-        notation  = f"{in_vars}->{out_vars}"
-
         logger.info(
-            f"PSI forward [native single-call]: "
+            f"PSI forward [Option C — autoregressive chaining]: "
             f"T={T}, n_context={n_context}, n_pred={n_pred}, "
-            f"notation='{notation}'"
+            f"max_ctx_window={min(n_context + n_pred - 1, 9)}"
         )
 
         # ------------------------------------------------------------------ #
         # Denormalise all frames to [0, 1]
         # ------------------------------------------------------------------ #
-        # context_pixels[i] : [B, 3, H, W]
+        # context_pixels[i] : [B, 3, H, W] for frame i
         context_pixels: list[torch.Tensor] = [
             (x_f32[:, :, i] * self.img_std + self.img_mean).clamp(0.0, 1.0)
             for i in range(n_context)
         ]
-        # target_pixels[j] : [B, 3, H, W]
+        # target_pixels[j] : [B, 3, H, W] for future frame tgt_start + j
         target_pixels: list[torch.Tensor] = [
             (x_f32[:, :, tgt_start + j] * self.img_std + self.img_mean).clamp(0.0, 1.0)
             for j in range(n_pred)
         ]
 
         # ------------------------------------------------------------------ #
-        # Run PSI once per batch sample.
-        # (PSI2Predictor does not support batched generate() calls.)
+        # Build GT context PIL images for each batch item.
+        # gt_pils[b][i] = PIL Image of GT frame i for sample b.
         # ------------------------------------------------------------------ #
-        preds_per_sample: list[list[Image.Image]] = []
+        MAX_CTX = 9   # PSI accepts rgb0..rgb8 -> rgb9 (9 context + 1 output = 10 total)
 
+        gt_pils: list[list[Image.Image]] = []
         for b in range(B):
-            # Build the rgb kwargs: rgb0=PIL_0, rgb1=PIL_1, …
-            rgb_kwargs: dict[str, Image.Image] = {}
+            frames: list[Image.Image] = []
             for i in range(n_context):
                 frame_np = (
-                    context_pixels[i][b]   # [3, H, W]
-                    .permute(1, 2, 0)      # [H, W, 3]
+                    context_pixels[i][b]    # [3, H, W]
+                    .permute(1, 2, 0)       # [H, W, 3]
                     .cpu()
                     .numpy()
                 )
                 frame_np = (frame_np * 255.0).clip(0, 255).astype(np.uint8)
-                rgb_kwargs[f"rgb{i}"] = Image.fromarray(frame_np)
+                frames.append(Image.fromarray(frame_np))
+            gt_pils.append(frames)
 
-            with torch.no_grad():
-                raw = self.psi_predictor.generate(
-                    notation,
-                    **rgb_kwargs,
-                    temp=self.gen_temp,
-                    top_k=self.gen_top_k,
-                    top_p=self.gen_top_p,
-                    seed=self.gen_seed,
-                )
+        # ------------------------------------------------------------------ #
+        # Autoregressive chaining — Option C
+        # One generate() call per future frame.  Generated frames feed back
+        # into the context pool for the next step.
+        # Rolling window: when the pool exceeds MAX_CTX frames the oldest
+        # entry is dropped so the notation stays within rgb0..rgb{MAX_CTX-1}.
+        #
+        # Step j predicts frame (tgt_start + j):
+        #   pool    = GT frames 0..n_context-1  +  generated frames 0..j-1
+        #   ctx_win = pool[ max(0, len(pool)-MAX_CTX) : ]   (≤ MAX_CTX frames)
+        #   notation: rgb0,..,rgb{ctx_size-1} -> rgb{ctx_size}
+        # ------------------------------------------------------------------ #
+        preds_per_sample: list[list[Image.Image]] = []
 
-            # -------------------------------------------------------------- #
-            # Parse PSI's return value.
-            # Single output  → PIL Image  or  (PIL,)  or  {"rgb{n}": PIL}
-            # Multiple output→ tuple of PIL Images  or  dict keyed by var name
-            # -------------------------------------------------------------- #
+        for b in range(B):
+            pool: list[Image.Image] = list(gt_pils[b])   # start with GT context
             gen_pils: list[Image.Image] = []
 
-            if isinstance(raw, dict):
-                # Dict keyed by output variable name ("rgb{n_context}", …)
-                for j in range(n_pred):
-                    key = f"rgb{n_context + j}"
-                    pil = raw[key]
-                    gen_pils.append(_to_rgb_pil(pil, W, H, notation, j))
-            elif isinstance(raw, (tuple, list)):
-                # Tuple/list; may have a trailing _sequential_masks dict — skip it.
-                img_items = [item for item in raw if isinstance(item, Image.Image)]
-                if len(img_items) == n_pred:
-                    gen_pils = [_to_rgb_pil(p, W, H, notation, j) for j, p in enumerate(img_items)]
-                elif len(img_items) == 1 and n_pred == 1:
-                    gen_pils = [_to_rgb_pil(img_items[0], W, H, notation, 0)]
-                else:
-                    raise ValueError(
-                        f"PSI generate() returned {len(img_items)} PIL Images "
-                        f"but expected {n_pred} for notation '{notation}'."
-                    )
-            elif isinstance(raw, Image.Image):
-                # Direct PIL — only valid for n_pred == 1
-                if n_pred != 1:
-                    raise ValueError(
-                        f"PSI generate() returned a single PIL Image but "
-                        f"n_pred={n_pred} (notation='{notation}')."
-                    )
-                gen_pils = [_to_rgb_pil(raw, W, H, notation, 0)]
-            else:
-                raise TypeError(
-                    f"PSI generate() returned unexpected type {type(raw)} "
-                    f"for notation '{notation}'."
+            for j in range(n_pred):
+                # Determine context window
+                pool_start = max(0, len(pool) - MAX_CTX)
+                ctx_win    = pool[pool_start:]
+                ctx_size   = len(ctx_win)
+
+                in_side  = ",".join(f"rgb{k}" for k in range(ctx_size))
+                out_var  = f"rgb{ctx_size}"
+                notation = f"{in_side}->{out_var}"
+
+                rgb_kwargs: dict[str, Image.Image] = {
+                    f"rgb{k}": ctx_win[k] for k in range(ctx_size)
+                }
+
+                logger.info(
+                    f"PSI autoregressive step j={j}/{n_pred-1}  "
+                    f"pool_start={pool_start}  ctx={ctx_size}  notation={notation}"
                 )
 
+                with torch.no_grad():
+                    raw = self.psi_predictor.generate(
+                        notation,
+                        **rgb_kwargs,
+                        temp=self.gen_temp,
+                        top_k=self.gen_top_k,
+                        top_p=self.gen_top_p,
+                        seed=self.gen_seed,
+                    )
+
+                # PSI return convention for single output:
+                #   PIL Image directly  (most common)
+                #   OR 1-tuple + trailing _sequential_masks dict
+                # For multi-output (shouldn't happen here but guard anyway):
+                #   tuple of N PIL Images + trailing dict
+                if isinstance(raw, dict):
+                    pred_pil = raw[out_var]
+                elif isinstance(raw, (tuple, list)):
+                    pred_pil = raw[0]   # first element is the predicted PIL
+                else:
+                    pred_pil = raw
+
+                if not isinstance(pred_pil, Image.Image):
+                    raise TypeError(
+                        f"PSI generate() returned unexpected type {type(pred_pil)} "
+                        f"at step j={j}; notation='{notation}'"
+                    )
+
+                pred_pil = pred_pil.convert("RGB")
+                if pred_pil.size != (W, H):
+                    pred_pil = pred_pil.resize((W, H), Image.BILINEAR)
+
+                gen_pils.append(pred_pil)
+                pool.append(pred_pil)   # feed generated frame back into pool
+
             preds_per_sample.append(gen_pils)
+
 
         # ------------------------------------------------------------------ #
         # Visualization: save context.gif and prediction.gif per batch sample
         # ------------------------------------------------------------------ #
         if self.viz_dir is not None:
             for b in range(B):
+                # Compute absolute sampled-frame index of the first predicted frame.
                 if self._viz_is_max_context:
                     abs_tgt_start = tgt_start
                 else:
@@ -416,7 +410,7 @@ class NativePSIWrapper(nn.Module):
                     )
                     for i in range(n_context)
                 ]
-                gt_pils_viz = [
+                gt_pils = [
                     Image.fromarray(
                         (target_pixels[j][b].permute(1, 2, 0).cpu().numpy() * 255)
                         .clip(0, 255).astype(np.uint8)
@@ -428,12 +422,14 @@ class NativePSIWrapper(nn.Module):
                     abs_tgt_start=abs_tgt_start,
                     context_pils=context_pils,
                     psi_preds=preds_per_sample[b],
-                    gt_pils=gt_pils_viz,
+                    gt_pils=gt_pils,
                 )
 
         # ------------------------------------------------------------------ #
         # Patchify and concatenate across all predicted frames
         # ------------------------------------------------------------------ #
+        # Convert each list of per-sample PIL images to a batched [B, 3, H, W]
+        # tensor, then patchify.
         pred_patches_list: list[torch.Tensor] = []
         tgt_patches_list: list[torch.Tensor] = []
 
@@ -446,8 +442,8 @@ class NativePSIWrapper(nn.Module):
                 for b in range(B)
             ]).to(x.device)   # [B, 3, H, W]
 
-            pred_patches_list.append(self._patchify(pred_batch))       # [B, N, D]
-            tgt_patches_list.append(self._patchify(target_pixels[j]))  # [B, N, D]
+            pred_patches_list.append(self._patchify(pred_batch))          # [B, N, D]
+            tgt_patches_list.append(self._patchify(target_pixels[j]))     # [B, N, D]
 
         preds   = torch.cat(pred_patches_list, dim=1)   # [B, n_pred*N, D]
         targets = torch.cat(tgt_patches_list,  dim=1)   # [B, n_pred*N, D]
@@ -522,9 +518,9 @@ class NativePSIWrapper(nn.Module):
         dur      = self.gif_duration_ms
 
         # Absolute raw-video frame index of the last context frame
-        abs_ctx_frame = abs_tgt_start - 1
-        raw_ctx_frame = abs_ctx_frame * self._viz_frame_step
-        raw_tgt_start = abs_tgt_start * self._viz_frame_step
+        abs_ctx_frame     = abs_tgt_start - 1
+        raw_ctx_frame     = abs_ctx_frame * self._viz_frame_step
+        raw_tgt_start     = abs_tgt_start * self._viz_frame_step
 
         video_folder = os.path.join(self.viz_dir, self.current_video_name)
         os.makedirs(video_folder, exist_ok=True)
@@ -587,7 +583,7 @@ class NativePSIWrapper(nn.Module):
             panels = [
                 (pil_pred, "PSI Prediction"),
                 (pil_gt,   "Ground Truth"),
-                (pil_diff, f"Diff×5  L1={l1_j:.4f}"),
+                (pil_diff, f"Diff\u00d75  L1={l1_j:.4f}"),
             ]
             for k, (panel, label) in enumerate(panels):
                 x_off = k * (W + GAP)
@@ -615,7 +611,7 @@ class NativePSIWrapper(nn.Module):
         n_patches = (H // p) * (W // p)
         patch_dim = p * p * 3
         return (
-            f"NativePSIWrapper(\n"
+            f"AnticipativePSIWrapper(\n"
             f"  frames_per_clip={self.frames_per_clip},\n"
             f"  nb_context_frames={self.nb_context_frames},\n"
             f"  resolution={self.resolution},\n"
@@ -624,30 +620,3 @@ class NativePSIWrapper(nn.Module):
             f"top_p={self.gen_top_p}, seed={self.gen_seed})\n"
             f")"
         )
-
-
-# ---------------------------------------------------------------------------
-# Module-level helper
-# ---------------------------------------------------------------------------
-
-def _to_rgb_pil(
-    pil: object,
-    W: int,
-    H: int,
-    notation: str,
-    step: int,
-) -> Image.Image:
-    """
-    Coerce *pil* to an RGB PIL Image of size (W, H).
-
-    Raises TypeError if *pil* is not a PIL Image.
-    """
-    if not isinstance(pil, Image.Image):
-        raise TypeError(
-            f"PSI generate() returned non-PIL object {type(pil)} "
-            f"at output step {step} for notation '{notation}'."
-        )
-    pil = pil.convert("RGB")
-    if pil.size != (W, H):
-        pil = pil.resize((W, H), Image.BILINEAR)
-    return pil
