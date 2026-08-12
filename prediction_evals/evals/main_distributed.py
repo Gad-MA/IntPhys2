@@ -15,8 +15,8 @@ import time
 # !! CHANGE THESE if you switch clusters !!
 CLUSTER_NAME = "rcs"   # The RCS cluster does not set SLURM_CLUSTER_NAME automatically;
                         # get_cluster() in utils.py reads this to resolve dataset paths.
-SLURM_MEM    = "24G"   # Total RAM per node. RCS minimum is 29 GB (gpu-02/03/04);
-                        # 24 G leaves ~5 GB headroom for the OS.
+SLURM_MEM    = "55G"   # Total RAM per node. Eligible nodes: gpu-05 (60 GB), gpu-06 (76 GB), gpu-07 (122 GB).
+                        # 55 G is the safest maximum — leaves ~5 GB OS headroom on the smallest (gpu-05).
 os.environ.setdefault("SLURM_CLUSTER_NAME", CLUSTER_NAME)
 
 import submitit

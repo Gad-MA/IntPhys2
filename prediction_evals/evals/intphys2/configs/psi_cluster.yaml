@@ -5,17 +5,20 @@
 #   cd prediction_evals/
 #   python -m evals.main --devices cuda:0 --fname evals/intphys2/configs/psi.yaml
 #
-# USAGE — SLURM cluster (RCS, 6 nodes / 7 GPUs):
+# USAGE — SLURM cluster (RCS):
 #   python -m evals.main_distributed \
-#     --fname evals/intphys2/configs/psi.yaml \
-#     --folder ./logs --partition gpu --ntasks 7
+#     --fname evals/intphys2/configs/psi_cluster.yaml \
+#     --folder ./logs --partition gpu
+#
+# Eligible nodes (≥24 GB VRAM): gpu-05 (RTX 3090), gpu-06 (RTX 5090), gpu-07 (RTX 3090)
+# Excluded (OOM / too little VRAM): gpu-02 (RTX 5060 Ti, 16G), gpu-03 (GTX 1080 Ti + RTX 3060), gpu-04 (RTX 4060 Ti, 16G)
 #
 # NOTE: PSI generates frames autoregressively (one token at a time), so
 # inference is slower than V-JEPA / VideoMAEv2.  Start on intphys2-debug
 # (60 videos) to verify correctness before switching to intphys2-main.
 
 # Cluster / distributed settings
-nodes: 4
+nodes: 3  # gpu-05, gpu-06, gpu-07 only (≥24 GB VRAM); gpu-02/03/04 excluded
 tasks_per_node: 1   # Use 1 GPU per node; PSI is memory-intensive
 
 tag: default

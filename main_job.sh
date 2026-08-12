@@ -119,7 +119,7 @@ python -m evals.main_distributed \
     --account grp-asem.a.abdelaziz  \
     --qos     normal                 \
     --time    4300                   \
-    --exclude gpu-03
+    --exclude gpu-02,gpu-03,gpu-04
 
 echo ""
 echo "=========================================="
