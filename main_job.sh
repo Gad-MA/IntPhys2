@@ -110,6 +110,8 @@ echo ""
 mkdir -p "$SUBMITIT_LOGS" "$RESULTS_DIR"
 cd "$EVAL_ROOT"
 
+export HF_HOME="/data/asem.a.abdelaziz/gp-2027a/huggingface_downloads"
+
 python -m evals.main_distributed \
     --fname   "$CONFIG"              \
     --folder  "$SUBMITIT_LOGS"       \
