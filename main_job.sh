@@ -43,7 +43,7 @@ REPO_URL="https://github.com/Gad-MA/IntPhys2.git"
 PROJECT_ROOT="$HOME/IntPhys2"
 EVAL_ROOT="$PROJECT_ROOT/prediction_evals"
 VENV_DIR="$HOME/venvs/IntPhys2"
-CONFIG="$EVAL_ROOT/evals/intphys2/configs/psi.yaml"
+CONFIG="$EVAL_ROOT/evals/intphys2/configs/psi_cluster.yaml"
 SUBMITIT_LOGS="$EVAL_ROOT/logs/submitit"
 RESULTS_DIR="$EVAL_ROOT/results/psi0_5"
 
