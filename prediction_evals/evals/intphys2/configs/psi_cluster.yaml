@@ -18,7 +18,7 @@
 # (60 videos) to verify correctness before switching to intphys2-main.
 
 # Cluster / distributed settings
-nodes: 3  # gpu-05, gpu-06, gpu-07 only (≥24 GB VRAM); gpu-02/03/04 excluded
+nodes: 2  # gpu-05, gpu-06, gpu-07 only (≥24 GB VRAM); gpu-02/03/04 excluded
 tasks_per_node: 1   # Use 1 GPU per node; PSI is memory-intensive
 
 tag: default
